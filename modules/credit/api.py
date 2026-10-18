@@ -33,6 +33,7 @@ import os
 import sqlite3
 import threading
 import time
+import urllib.parse
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -48,7 +49,22 @@ import logkit
 import notify
 
 BASE_DIR = Path(__file__).resolve().parent
-DB_PATH = Path(os.getenv("CREDIT_DB", BASE_DIR / "data" / "jobs.db"))
+#: 存储后端选择器。取值有两种形态，靠有无 ``://`` 区分：
+#:
+#: * 普通路径（默认）→ SQLite，如 ``data/jobs.db``
+#: * 连接串 → MySQL，如 ``mysql://root:pw@127.0.0.1:3306/credit_check``
+#:
+#: 为什么用同一个环境变量而不是新增一个：部署时只需改一处；且默认值仍是
+#: SQLite，现有测试（都设 ``CREDIT_DB=<tmp>/jobs.db``）无需改动即可继续跑。
+CREDIT_DB = os.getenv("CREDIT_DB", str(BASE_DIR / "data" / "jobs.db"))
+#: Store 的入参：SQLite 文件路径，或 mysql:// 连接串。调用方传这个，别传 DB_PATH。
+DB_TARGET: str = CREDIT_DB
+#: SQLite 模式下的文件路径；MySQL 模式下为 None。
+#:
+#: 为什么有条件：``Path("mysql://root:@127.0.0.1:3307/credit_check")`` 会得到
+#: ``mysql:\root:@127.0.0.1:3307\credit_check``（反斜杠！），下游任何按路径
+#: 处理的代码都会拿着一个废值去 stat/日志，排查时极具误导性。
+DB_PATH: Path | None = None if "://" in CREDIT_DB else Path(CREDIT_DB)
 OUT_DIR = Path(os.getenv("CREDIT_OUT", BASE_DIR / "data" / "results"))
 
 log = logging.getLogger("api")
@@ -144,7 +160,11 @@ class JobDetail(JobSummary):
 
 
 # ============================================================ 存储层
-SCHEMA = """
+#
+# 两套 DDL：SQLite 与 MySQL 的列类型、索引语法、自增语义都不同，
+# 硬凑成一份会在其中一端报语法错。这里分开写，字段名与顺序保持一致，
+# 这样 SQL 语句（除占位符）可以共用。
+SCHEMA_SQLITE = """
 CREATE TABLE IF NOT EXISTS jobs (
     job_id      TEXT PRIMARY KEY,
     state       TEXT NOT NULL,
@@ -177,22 +197,147 @@ CREATE TABLE IF NOT EXISTS results (
 CREATE INDEX IF NOT EXISTS idx_results_job ON results(job_id, seq);
 """
 
+#: MySQL 侧：TEXT 不能做主键（InnoDB 要求定长前缀或改成 VARCHAR），
+#: 所以 job_id 用 VARCHAR(64)；request 存 JSON 文本，用 LONGTEXT 兼容旧数据
+#: （不用 JSON 类型——旧库里存的是任意 dict，且我们只整存整取，不做路径查询）。
+#: ``IF NOT EXISTS`` 索引在 MySQL 不支持，索引写进 CREATE TABLE。
+SCHEMA_MYSQL = """
+CREATE TABLE IF NOT EXISTS jobs (
+    job_id      VARCHAR(64) NOT NULL,
+    state       VARCHAR(16) NOT NULL,
+    total       INT NOT NULL,
+    finished    INT NOT NULL DEFAULT 0,
+    created_at  VARCHAR(40) NOT NULL,
+    started_at  VARCHAR(40) DEFAULT NULL,
+    finished_at VARCHAR(40) DEFAULT NULL,
+    error       TEXT,
+    notified    TINYINT(1) NOT NULL DEFAULT 0,
+    request     LONGTEXT NOT NULL,
+    csv_path    VARCHAR(1024) DEFAULT NULL,
+    PRIMARY KEY (job_id),
+    KEY idx_jobs_created (created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+"""
+
+SCHEMA_MYSQL_RESULTS = """
+CREATE TABLE IF NOT EXISTS results (
+    job_id      VARCHAR(64) NOT NULL,
+    seq         INT NOT NULL,
+    name        VARCHAR(512) NOT NULL,
+    matched_name VARCHAR(512) DEFAULT NULL,
+    credit_code VARCHAR(64) DEFAULT NULL,
+    status      VARCHAR(64) DEFAULT NULL,
+    verdict     VARCHAR(16) DEFAULT NULL,
+    entity_type VARCHAR(64) DEFAULT NULL,
+    data_source VARCHAR(64) DEFAULT NULL,
+    record_count INT DEFAULT NULL,
+    detail_url  VARCHAR(1024) DEFAULT NULL,
+    note        TEXT,
+    PRIMARY KEY (job_id, seq),
+    KEY idx_results_job (job_id, seq),
+    CONSTRAINT fk_results_job FOREIGN KEY (job_id)
+        REFERENCES jobs(job_id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+"""
+
 
 def _now() -> str:
     return datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds")
 
 
-class Store:
-    """sqlite3 封装。每次操作开新连接，避免跨线程共享 connection。"""
+def _parse_mysql_url(url: str) -> dict[str, Any]:
+    """把 ``mysql://user:pw@host:port/db?charset=utf8mb4`` 拆成 pymysql 参数。
 
-    def __init__(self, path: Path) -> None:
-        self.path = path
-        path.parent.mkdir(parents=True, exist_ok=True)
-        with self._conn() as c:
-            c.executescript(SCHEMA)
+    不引 SQLAlchemy：这一层只做「开连接 / 跑 SQL / 关连接」，同步 12 条语句，
+    为它引一个 ORM 反而增加依赖面。用 ``urllib.parse`` 拆，标准库即可。
+
+    支持的写法与限制：
+    * ``mysql://`` 与 ``mysql+pymysql://`` 都接受（后者方便从别处的配置直接拷过来）
+    * 用户名/密码里的特殊字符需 URL 编码（``%40`` 之类），``urlsplit`` 会解码
+    * ``charset`` 等 query 参数不在这里处理——固定用 utf8mb4（见 ``_mysql_connect``）
+    """
+    parsed = urllib.parse.urlsplit(url)
+    scheme = parsed.scheme.split("+")[0]
+    if scheme not in ("mysql", "mariadb"):
+        raise ValueError(
+            f"CREDIT_DB 看起来是连接串但协议不支持：{parsed.scheme!r}；"
+            "只支持 mysql:// 或普通文件路径")
+    database = (parsed.path or "").lstrip("/")
+    if not database:
+        raise ValueError(
+            f"CREDIT_DB 连接串缺少库名：{url!r}；形如 "
+            "mysql://root:pw@127.0.0.1:3306/credit_check")
+    return {
+        "host": parsed.hostname or "127.0.0.1",
+        "port": parsed.port or 3306,
+        "user": urllib.parse.unquote(parsed.username or "root"),
+        "password": urllib.parse.unquote(parsed.password or ""),
+        "database": database,
+    }
+
+
+class Store:
+    """作业库封装，支持 SQLite 与 MySQL 两种后端。
+
+    后端由 ``CREDIT_DB`` 的形态决定（见模块顶部注释）：
+
+    * 普通路径 → ``sqlite3``，每次操作开新连接（避免跨线程共享连接，
+      SQLite 的 connection 不是线程安全的）
+    * ``mysql://...`` → ``pymysql``，同样每次操作开新连接，靠 MySQL 服务端
+      承压（作业量是「一天几十条」，不是高并发场景，连接池收益很小）
+
+    两种后端对外暴露**完全相同**的 11 个方法，调用方不需要知道用的是哪个。
+    """
+
+    def __init__(self, path: Path | str) -> None:
+        raw = str(path)
+        self.dsn: dict[str, Any] | None = None
+        self.path: Path | None = None
+        self.backend: str
+        if "://" in raw:
+            self.backend = "mysql"
+            self.dsn = _parse_mysql_url(raw)
+            self._mysql_init()
+        else:
+            self.backend = "sqlite"
+            self.path = Path(raw)
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            with self._conn() as c:
+                c.executescript(SCHEMA_SQLITE)
+
+    # -- 连接管理 -------------------------------------------------------
+    def _mysql_connect(self):
+        import pymysql
+        import pymysql.cursors
+
+        return pymysql.connect(
+            **self.dsn, charset="utf8mb4", autocommit=False,
+            cursorclass=pymysql.cursors.DictCursor)
+
+    def _mysql_init(self) -> None:
+        """建表。MySQL 的 ``CREATE TABLE IF NOT EXISTS`` 幂等，可反复调用。"""
+        conn = self._mysql_connect()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(SCHEMA_MYSQL)
+                cur.execute(SCHEMA_MYSQL_RESULTS)
+            conn.commit()
+        finally:
+            conn.close()
 
     @contextlib.contextmanager
     def _conn(self):
+        if self.backend == "mysql":
+            conn = self._mysql_connect()
+            try:
+                yield conn
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                raise
+            finally:
+                conn.close()
+            return
         conn = sqlite3.connect(self.path, timeout=30)
         conn.row_factory = sqlite3.Row
         try:
@@ -203,10 +348,30 @@ class Store:
         finally:
             conn.close()
 
+    def _execute(self, conn, sql: str, params: tuple = ()):
+        """执行一条语句。占位符在 MySQL 下是 %s，SQLite 下是 ?。
+
+        SQL 文本统一用 ``?`` 书写，这里按后端替换，避免两份 SQL 文本漂移。
+        """
+        if self.backend == "mysql":
+            sql = sql.replace("?", "%s")
+        cur = conn.cursor()
+        cur.execute(sql, params)
+        return cur
+
+    def _fetchall(self, conn, sql: str, params: tuple = ()) -> list[dict]:
+        cur = self._execute(conn, sql, params)
+        rows = cur.fetchall()
+        if self.backend == "mysql":
+            return [dict(r) for r in rows]
+        return [dict(r) for r in rows]
+
+    # -- 作业 -----------------------------------------------------------
     def create_job(self, names: list[str], request: dict) -> str:
         job_id = f"job_{datetime.now():%Y%m%d_%H%M%S}_{uuid.uuid4().hex[:6]}"
         with self._conn() as c:
-            c.execute(
+            self._execute(
+                c,
                 "INSERT INTO jobs(job_id,state,total,created_at,request) "
                 "VALUES(?,?,?,?,?)",
                 (job_id, "queued", len(names), _now(),
@@ -231,52 +396,68 @@ class Store:
             vals.append(csv_path)
         vals.append(job_id)
         with self._conn() as c:
-            c.execute(f"UPDATE jobs SET {','.join(sets)} WHERE job_id=?", vals)
+            self._execute(c, f"UPDATE jobs SET {','.join(sets)} WHERE job_id=?",
+                          tuple(vals))
 
     def mark_notified(self, job_id: str) -> None:
         with self._conn() as c:
-            c.execute("UPDATE jobs SET notified=1 WHERE job_id=?", (job_id,))
+            self._execute(c, "UPDATE jobs SET notified=1 WHERE job_id=?", (job_id,))
 
     def add_result(self, job_id: str, seq: int, row: dict) -> None:
+        values = (job_id, seq, row.get("输入名称", ""), row.get("匹配名称", ""),
+                  row.get("统一社会信用代码", ""), row.get("登记状态", ""),
+                  row.get("判定", "unknown"), row.get("主体类型", ""),
+                  row.get("数据源", ""), int(row.get("记录数") or 0),
+                  row.get("详情URL", ""), row.get("备注", ""))
+        cols = ("job_id,seq,name,matched_name,credit_code,status,verdict,"
+                "entity_type,data_source,record_count,detail_url,note")
         with self._conn() as c:
-            c.execute(
-                "INSERT OR REPLACE INTO results(job_id,seq,name,matched_name,"
-                "credit_code,status,verdict,entity_type,data_source,record_count,"
-                "detail_url,note) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
-                (job_id, seq, row.get("输入名称", ""), row.get("匹配名称", ""),
-                 row.get("统一社会信用代码", ""), row.get("登记状态", ""),
-                 row.get("判定", "unknown"), row.get("主体类型", ""),
-                 row.get("数据源", ""), int(row.get("记录数") or 0),
-                 row.get("详情URL", ""), row.get("备注", "")))
+            if self.backend == "mysql":
+                # SQLite 的 INSERT OR REPLACE 靠「冲突即删再插」；MySQL 对应写法是
+                # ON DUPLICATE KEY UPDATE，语义差别只在自增列（本表没有）。
+                self._execute(
+                    c,
+                    f"INSERT INTO results({cols}) VALUES(?,?,?,?,?,?,?,?,?,?,?,?) "
+                    "ON DUPLICATE KEY UPDATE name=VALUES(name), "
+                    "matched_name=VALUES(matched_name), "
+                    "credit_code=VALUES(credit_code), status=VALUES(status), "
+                    "verdict=VALUES(verdict), entity_type=VALUES(entity_type), "
+                    "data_source=VALUES(data_source), "
+                    "record_count=VALUES(record_count), "
+                    "detail_url=VALUES(detail_url), note=VALUES(note)",
+                    values)
+            else:
+                self._execute(
+                    c,
+                    f"INSERT OR REPLACE INTO results({cols}) "
+                    "VALUES(?,?,?,?,?,?,?,?,?,?,?,?)", values)
 
     def bump_finished(self, job_id: str) -> None:
         with self._conn() as c:
-            c.execute("UPDATE jobs SET finished=finished+1 WHERE job_id=?", (job_id,))
+            self._execute(c, "UPDATE jobs SET finished=finished+1 WHERE job_id=?",
+                          (job_id,))
 
     def get_job(self, job_id: str) -> dict | None:
         with self._conn() as c:
-            r = c.execute("SELECT * FROM jobs WHERE job_id=?", (job_id,)).fetchone()
-        return dict(r) if r else None
+            rows = self._fetchall(c, "SELECT * FROM jobs WHERE job_id=?", (job_id,))
+        return rows[0] if rows else None
 
     def list_jobs(self, limit: int = 50) -> list[dict]:
         with self._conn() as c:
-            rows = c.execute(
-                "SELECT * FROM jobs ORDER BY created_at DESC LIMIT ?", (limit,)
-            ).fetchall()
-        return [dict(r) for r in rows]
+            return self._fetchall(
+                c, "SELECT * FROM jobs ORDER BY created_at DESC LIMIT ?", (limit,))
 
     def get_results(self, job_id: str) -> list[dict]:
         with self._conn() as c:
-            rows = c.execute(
-                "SELECT * FROM results WHERE job_id=? ORDER BY seq", (job_id,)
-            ).fetchall()
-        return [dict(r) for r in rows]
+            return self._fetchall(
+                c, "SELECT * FROM results WHERE job_id=? ORDER BY seq", (job_id,))
 
     def counts(self, job_id: str) -> dict[str, int]:
         with self._conn() as c:
-            rows = c.execute(
+            rows = self._fetchall(
+                c,
                 "SELECT verdict, COUNT(*) n FROM results WHERE job_id=? "
-                "GROUP BY verdict", (job_id,)).fetchall()
+                "GROUP BY verdict", (job_id,))
         return {r["verdict"]: r["n"] for r in rows}
 
 
@@ -463,12 +644,12 @@ class Worker:
 @contextlib.asynccontextmanager
 async def lifespan(app: FastAPI):
     logkit.setup_logging("api")
-    store = Store(DB_PATH)
+    store = Store(DB_TARGET)
     worker = Worker(store)
     worker.start()
     app.state.store = store
     app.state.worker = worker
-    log.info("服务启动：db=%s out=%s", DB_PATH, OUT_DIR)
+    log.info("服务启动：db=%s(%s) out=%s", DB_TARGET, store.backend, OUT_DIR)
     try:
         yield
     finally:
@@ -578,8 +759,10 @@ router = APIRouter(prefix="/api")
 def health(request: Request) -> HealthResponse:
     store: Store = request.app.state.store
     try:
+        # 不能写 c.execute("SELECT 1")：pymysql 的 Connection 没有 execute，
+        # 那种写法只在 SQLite 下成立，会让 MySQL 部署永远 db=false。
         with store._conn() as c:
-            c.execute("SELECT 1").fetchone()
+            store._fetchall(c, "SELECT 1 AS ok")
         db_ok = True
     except Exception:
         db_ok = False

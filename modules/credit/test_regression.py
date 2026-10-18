@@ -564,7 +564,7 @@ class TestScriptIntegrity:
         tree = ast.parse((HERE / "api.py").read_text(encoding="utf-8"))
         stdlib = {"__future__", "asyncio", "contextlib", "csv", "logging", "os",
                   "sqlite3", "threading", "time", "uuid", "datetime", "pathlib",
-                  "typing"}
+                  "typing", "urllib"}
         local = {"credit_check", "logkit", "notify"}
         # 模块名 → pip 包名（大小写/下划线差异）
         alias = {"pydantic_core": "pydantic_core", "pil": "Pillow"}
@@ -984,6 +984,79 @@ def client(tmp_path, monkeypatch):
     from fastapi.testclient import TestClient
     with TestClient(api.app) as c:
         yield c
+
+
+class TestStoreBackend:
+    """存储后端选择与 DSN 解析。
+
+    这些测试**不需要真 MySQL**：只验证「给什么形态的 CREDIT_DB，就走哪个后端」，
+    以及 URL 拆解是否符合 pymysql 的期望。真有库时才跑的部分放在
+    ``TestStoreMySQL``（用 ``WIPO_TEST_MYSQL_URL`` 之类的开关跳过）。
+    """
+
+    def test_path_selects_sqlite(self, tmp_path):
+        import api
+        s = api.Store(tmp_path / "jobs.db")
+        assert s.backend == "sqlite"
+        assert s.dsn is None
+        assert (tmp_path / "jobs.db").is_file(), "构造时应当建库建表"
+
+    @pytest.mark.parametrize("url,expect", [
+        ("mysql://root:pw@127.0.0.1:3306/credit_check",
+         {"host": "127.0.0.1", "port": 3306, "user": "root",
+          "password": "pw", "database": "credit_check"}),
+        ("mysql://root:@127.0.0.1:3307/credit_check",
+         {"host": "127.0.0.1", "port": 3307, "user": "root",
+          "password": "", "database": "credit_check"}),
+        # 从别处拷来的 SQLAlchemy 风格串也要认
+        ("mysql+pymysql://u:p@db.local/credit",
+         {"host": "db.local", "port": 3306, "user": "u",
+          "password": "p", "database": "credit"}),
+        # 无端口 → 默认 3306
+        ("mysql://root@localhost/credit",
+         {"host": "localhost", "port": 3306, "user": "root",
+          "password": "", "database": "credit"}),
+    ])
+    def test_parse_mysql_url(self, url, expect):
+        import api
+        assert api._parse_mysql_url(url) == expect
+
+    @pytest.mark.parametrize("url", [
+        "mysql://root@127.0.0.1:3306",          # 缺库名
+        "mysql://root@127.0.0.1:3306/",         # 库名为空
+    ])
+    def test_parse_mysql_url_rejects_missing_database(self, url):
+        import api
+        with pytest.raises(ValueError, match="库名"):
+            api._parse_mysql_url(url)
+
+    def test_parse_mysql_url_rejects_unknown_scheme(self):
+        import api
+        with pytest.raises(ValueError, match="协议"):
+            api._parse_mysql_url("postgresql://u@h/db")
+
+    def test_url_percent_decoded(self):
+        """密码里的特殊字符要 decode，否则会把 %40 当成字面量发给服务端。"""
+        import api
+        got = api._parse_mysql_url("mysql://u:p%40ss%2Fw@h:3306/db")
+        assert got["password"] == "p@ss/w"
+
+    def test_db_path_is_none_for_mysql(self, monkeypatch):
+        """MySQL 模式下 DB_PATH 必须是 None。
+
+        否则 ``Path("mysql://...")`` 会得到 ``mysql:\\root:@host\\db`` 这种反斜杠
+        垃圾值，被日志和 healthcheck 拿去 stat 会产生误导性输出。
+        """
+        import importlib
+        monkeypatch.setenv("CREDIT_DB", "mysql://root:@127.0.0.1:3307/credit_check")
+        import api
+        reloaded = importlib.reload(api)
+        try:
+            assert reloaded.DB_PATH is None
+            assert reloaded.DB_TARGET.startswith("mysql://")
+        finally:
+            monkeypatch.undo()
+            importlib.reload(api)
 
 
 class TestApiContract:
@@ -1532,6 +1605,26 @@ class TestHealthcheckProbes:
         p = tmp_path / "bad.db"
         p.write_bytes(b"not a sqlite file at all" * 10)
         ok, detail = hc.check_jobs_db(p)
+        assert ok is False and "不可读" in detail
+
+    def test_jobs_db_mysql_unreachable_is_failure(self):
+        """MySQL 模式下连不上必须是**失败**。
+
+        这一条守的是最容易犯的错：把连接串当路径处理，
+        ``Path("mysql://...")`` 得到废路径 → ``.is_file()`` 恒 False →
+        报「作业库未创建（仅用命令行时正常）」→ 每日巡检把真实的
+        数据库故障当成「没启用」放过去。
+        """
+        import healthcheck as hc
+        ok, detail = hc.check_jobs_db(
+            "mysql://root:@127.0.0.1:1/credit_check")  # 1 端口必不通
+        assert ok is False, "连不上 MySQL 却被判成正常"
+        assert "不可读" in detail
+
+    def test_jobs_db_mysql_bad_host_is_failure(self):
+        import healthcheck as hc
+        ok, detail = hc.check_jobs_db(
+            "mysql://root:@no-such-host.invalid:3306/credit_check")
         assert ok is False and "不可读" in detail
 
 

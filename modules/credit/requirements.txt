@@ -60,6 +60,12 @@ fastapi==0.118.3
 uvicorn==0.38.0
 pydantic==2.14.1
 
+# ---- MySQL 存储后端（可选：CREDIT_DB 设成 mysql://... 时才真正连库）----
+# 默认仍是 SQLite，不设这个包也能跑；但 api.py 顶层 import 了 pymysql，
+# 缺了它连 SQLite 模式都 ModuleNotFoundError → 必须列进来。
+# 与 WIPO 模块的 aiomysql 不冲突：那个走 async，这个走同步。
+pymysql==1.2.3
+
 # ---- 其余传递依赖（同样锁定，保证 `pip install -r` 得到逐字节一致的包集合）----
 certifi==2026.7.22
 charset-normalizer==3.5.2

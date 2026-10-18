@@ -68,7 +68,42 @@ python aggregator.py
 - `modules/wipo/config.json`（SMTP、推送渠道）
 - `modules/credit/.env`（`SMTP_*`、`MAIL_TO_BUSINESS`、`MAIL_TO_MANAGER`）
 
-数据库默认走 SQLite（开箱即用）；要换 MySQL 见各模块自己的 README。
+### 5. 数据库
+
+两个模块的存储是**各自独立**的，可以分开选后端：
+
+| 模块 | 环境变量 | 默认 | MySQL 写法 |
+|---|---|---|---|
+| WIPO | `WIPO_DATABASE__URL` | `mysql+aiomysql://root:@127.0.0.1:3306/wipo_trademark` | 本来就是 MySQL |
+| credit | `CREDIT_DB` | `data/jobs.db`（SQLite） | `mysql://root:pw@127.0.0.1:3306/credit_check` |
+
+`CREDIT_DB` 靠**有没有 `://`** 区分后端：普通路径 → SQLite，连接串 → MySQL。
+同一个变量两种形态，是为了部署时只改一处；默认仍是 SQLite，所以现有
+测试（都设 `CREDIT_DB=<tmp>/jobs.db`）不需要改动。
+
+**同实例分库**（推荐，两个库互不影响）：
+
+```sql
+CREATE DATABASE wipo_trademark CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+CREATE DATABASE credit_check   CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+```
+
+```powershell
+$env:WIPO_DATABASE__URL = 'mysql+aiomysql://root:pw@127.0.0.1:3306/wipo_trademark?charset=utf8mb4'
+$env:CREDIT_DB          = 'mysql://root:pw@127.0.0.1:3306/credit_check'
+python aggregator.py
+```
+
+**同库分表**也成立（两模块表名零交集：WIPO 是 `trademarks`/`reports`/`check_runs`，
+credit 是 `jobs`/`results`），把 `CREDIT_DB` 指向 `wipo_trademark` 即可，
+但两套 DDL 会混在一个库里，出了问题是两边一起查，一般不建议。
+
+建表是**自动**的：WIPO 在 lifespan 里 `create_all`，credit 在 `Store.__init__`
+里 `CREATE TABLE IF NOT EXISTS`，都幂等，不需要手工跑 SQL。两个模块都**没有**
+接 Alembic —— 改列时要删表重建或手工 `ALTER`。
+
+> credit 的连接是「每次操作开一条」，没有连接池。作业量是「一天几十条」的
+> 批处理，不是高并发在线服务，连接池的收益抵不上它带来的状态问题。
 
 ---
 

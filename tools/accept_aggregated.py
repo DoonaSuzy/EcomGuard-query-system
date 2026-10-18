@@ -3,6 +3,11 @@
 
 覆盖：壳页、两个子路径深链、跨模块切换、真实交互（新增商标 / 提交作业）、
 接口 16 条、静态资源不串台、全程无 4xx/5xx。
+
+默认把两个模块的库都指到临时 SQLite（隔离、可重复）。
+若外部已设 ``CREDIT_DB``，则**沿用外部值**（用于验证 MySQL 后端）——
+脚本不再覆盖它，`CREDIT_OUT` 同理。这条规则是为了让同一份验收能跑两种后端，
+而不是「看起来设了 MySQL 其实还在跑 SQLite」。
 """
 from __future__ import annotations
 
@@ -22,15 +27,19 @@ PY = os.path.join(os.environ["TEMP"], "compat_venv", "Scripts", "python.exe")
 
 tmp = tempfile.mkdtemp(prefix="agg_accept_")
 env = dict(os.environ)
+# 外部显式给了就用外部的（验证 MySQL 后端时必须这样），否则用临时 SQLite。
+credit_db = env.get("CREDIT_DB") or (tmp + r"\jobs.db")
+credit_out = env.get("CREDIT_OUT") or (tmp + r"\results")
 env.update({
     "PYTHONPATH": ROOT,
     "PYTHONIOENCODING": "utf-8",
     "WIPO_DATABASE__URL": "sqlite+aiosqlite:///" + (tmp + "/agg.db").replace("\\", "/"),
     "WIPO_REPORTS_DIR": tmp + r"\reports",
-    "CREDIT_DB": tmp + r"\jobs.db",
-    "CREDIT_OUT": tmp + r"\results",
+    "CREDIT_DB": credit_db,
+    "CREDIT_OUT": credit_out,
     "HTTPS_PROXY": "", "HTTP_PROXY": "",
 })
+print(f"[accept] CREDIT_DB = {credit_db}")
 
 with socket.socket() as s:
     s.bind(("127.0.0.1", 0))

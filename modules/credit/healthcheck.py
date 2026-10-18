@@ -56,7 +56,13 @@ import logkit
 BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 HEARTBEAT_PATH = DATA_DIR / "last_run.json"
-JOBS_DB_PATH = Path(os.getenv("CREDIT_DB", DATA_DIR / "jobs.db"))
+#: 作业库位置。与 api.py 同一套约定：普通路径 → SQLite，``mysql://`` → MySQL。
+#:
+#: 这里必须区分，否则 ``Path("mysql://root@host/db")`` 会得到
+#: ``mysql:\root@host\db`` 这种废路径，``.is_file()`` 恒 False，巡检会一直
+#: 报「作业库未创建」——把一个真实的数据库故障当成「没启用」放过去。
+CREDIT_DB = os.getenv("CREDIT_DB", str(DATA_DIR / "jobs.db"))
+JOBS_DB_PATH: Path | None = None if "://" in CREDIT_DB else Path(CREDIT_DB)
 
 #: 目标站可达性探测地址。用首页而不是私有 API：首页 200 即可说明网络与站点在线，
 #: 私有 API 还需要 vcode 会话，不适合做「能不能连上」的判断。
@@ -332,7 +338,15 @@ def check_heartbeat(path: Path | None = None,
 
 
 def check_jobs_db(path: Path | None = None) -> tuple[bool, str]:
-    """HTTP 服务的作业库是否可读（不存在不算失败：可能只用命令行）。"""
+    """HTTP 服务的作业库是否可读（不存在不算失败：可能只用命令行）。
+
+    MySQL 模式（``CREDIT_DB`` 是连接串）下会真的连一次库：
+    「连不上」必须是失败——每天巡检的目的就是发现服务异常，
+    把连不上静默成「没启用」等于把故障藏起来。
+    """
+    raw = str(path) if path is not None else CREDIT_DB
+    if "://" in raw:
+        return _check_jobs_db_mysql(raw)
     p = Path(path or JOBS_DB_PATH)
     if not p.is_file():
         return True, "作业库未创建（仅用命令行时正常）"
@@ -346,6 +360,34 @@ def check_jobs_db(path: Path | None = None) -> tuple[bool, str]:
     except Exception as e:
         return False, f"作业库不可读：{type(e).__name__}: {e}"
     return True, str(p)
+
+
+def _check_jobs_db_mysql(url: str) -> tuple[bool, str]:
+    """连一次 MySQL 并确认 jobs 表可查。返回 (ok, 说明)。"""
+    from urllib.parse import urlsplit
+
+    parsed = urlsplit(url)
+    database = (parsed.path or "").lstrip("/")
+    host = parsed.hostname or "127.0.0.1"
+    port = parsed.port or 3306
+    try:
+        import pymysql
+
+        conn = pymysql.connect(
+            host=host, port=port,
+            user=parsed.username or "root",
+            password=parsed.password or "",
+            database=database, connect_timeout=5,
+        )
+        try:
+            with conn.cursor() as cur:
+                cur.execute("SELECT 1 FROM jobs LIMIT 1")
+                cur.fetchall()
+        finally:
+            conn.close()
+    except Exception as e:
+        return False, f"作业库不可读：{type(e).__name__}: {e}"
+    return True, f"mysql://{host}:{port}/{database}"
 
 
 def write_heartbeat(path: Path | None = None, *,

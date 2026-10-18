@@ -393,6 +393,20 @@ $job.job_id
 数据落 `data/jobs.db`（sqlite，含作业与逐家结果）和 `data/results/<job_id>.csv`。
 `data/` 已在 `.gitignore` 里（作业库含查过的企业名称，属业务数据，不入库），只保留 `data/.gitkeep` 占位。
 
+**换 MySQL**：把 `CREDIT_DB` 设成连接串即可，代码不用动：
+
+```powershell
+$env:CREDIT_DB = 'mysql://root:pw@127.0.0.1:3306/credit_check'
+```
+
+取值靠**有没有 `://`** 区分：普通路径 → SQLite，连接串 → MySQL。两种后端由
+`Store` 内部按后端分派（占位符 `?` 在 MySQL 下自动换成 `%s`，
+`INSERT OR REPLACE` 换成 `ON DUPLICATE KEY UPDATE`），对外 11 个方法完全一致。
+建表仍是自动的，`CREATE TABLE IF NOT EXISTS` 幂等。
+
+需要 `pymysql`（已列进 `requirements.txt`）。连接是「每次操作开一条」，
+没有连接池 —— 作业量是批处理，不是高并发在线服务。
+
 > 接口**没有鉴权**，默认只监听 `127.0.0.1`。要暴露到局域网必须自己加一层反向代理与认证，
 > 否则等于把"批量查企业"的能力开放给任何人。
 

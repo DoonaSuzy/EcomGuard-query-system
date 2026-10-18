@@ -56,14 +56,14 @@ async def credit_lifespan_enter(application: FastAPI) -> None:
     与 ``credit_api.lifespan`` 的启动段等价，只是作用对象换成了主 app。
     """
     global _worker
-    store = credit_api.Store(credit_api.DB_PATH)
+    store = credit_api.Store(credit_api.DB_TARGET)
     worker = credit_api.Worker(store)
     worker.start()
     application.state.store = store
     application.state.worker = worker
     _worker = worker
-    log.info("营业执照模块已挂载：db=%s out=%s",
-             credit_api.DB_PATH, credit_api.OUT_DIR)
+    log.info("营业执照模块已挂载：db=%s(%s) out=%s",
+             credit_api.DB_TARGET, store.backend, credit_api.OUT_DIR)
 
 
 async def credit_lifespan_exit() -> None:
