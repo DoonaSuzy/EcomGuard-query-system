@@ -3,11 +3,16 @@
 
 一个 uvicorn 进程同时服务两个独立模块：
 
-    /wipo/*      WIPO 商标监控前端（modules/wipo/web/dist，需 --base=/wipo/ 构建）
-    /credit/*    营业执照巡检前端（modules/credit/frontend/dist，需 --base=/credit/ 构建）
+    /wipo/*      WIPO 商标监控前端（modules/wipo/web/dist-agg，--base=/wipo/ 构建）
+    /credit/*    营业执照巡检前端（modules/credit/frontend/dist-agg，--base=/credit/ 构建）
     /api/*       WIPO 接口（11 条）
     /api/jobs*   营业执照接口（5 条，含 /api/health）
     /           壳页：两个模块的入口卡片
+
+注意两个模块的 `dist-agg/` 与它们各自的 `dist/` 是**两套产物**：`dist/` 用默认 base
+（模块独立运行与独立回归用），`dist-agg/` 带子路径 base（本聚合系统托管用）。
+两者不能互相顶替，理由见 `WIPO_DIST` 上方的注释。
+构建命令：`python tools/build_frontends.py`。
 
 为什么是「单 app + include_router」而不是「mount 两个子 app」
 ------------------------------------------------------------
@@ -85,7 +90,7 @@ CREDIT_DIST = Path(os.getenv("CREDIT_DIST", CREDIT_DIR / "frontend" / "dist-agg"
 #   `dist-agg/`（构建时带 `--base=/wipo/`、`--base=/credit/`），因为 Vite 的
 #   动态 chunk 是按**模块 URL**解析的（`import("./OverviewView-x.js")`），
 #   改 HTML 或用 `<base href>` 都纠正不了它 —— 只能是构建期把 base 写进产物。
-#   构建命令见 docs/BUILD.md。
+#   构建命令：python tools/build_frontends.py（两套产物一次建完）。
 _WIPO_DIST_STANDALONE = WIPO_DIR / "web" / "dist"
 _CREDIT_DIST_STANDALONE = CREDIT_DIR / "frontend" / "dist"
 
