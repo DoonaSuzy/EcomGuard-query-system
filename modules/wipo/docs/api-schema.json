@@ -1,0 +1,575 @@
+{
+  "version": "2.0.0",
+  "updatedAt": "2026-10-16",
+  "description": "WIPO 商标监控系统 Web REST 接口契约（唯一来源）",
+  "owner": "app/api/v1/",
+  "consumers": [
+    "docs/docs_server.py",
+    "tests/test_api_schema.py"
+  ],
+  "routes": [
+    {
+      "method": "POST",
+      "path": "/api/check",
+      "endpoint": "check_trademarks"
+    },
+    {
+      "method": "GET",
+      "path": "/api/check/status",
+      "endpoint": "get_check_status"
+    },
+    {
+      "method": "GET",
+      "path": "/api/export",
+      "endpoint": "export_trademarks"
+    },
+    {
+      "method": "POST",
+      "path": "/api/import",
+      "endpoint": "import_trademarks"
+    },
+    {
+      "method": "GET",
+      "path": "/api/reports",
+      "endpoint": "get_reports"
+    },
+    {
+      "method": "GET",
+      "path": "/api/reports/{filename}",
+      "endpoint": "get_report"
+    },
+    {
+      "method": "GET",
+      "path": "/api/schema",
+      "endpoint": "get_api_schema"
+    },
+    {
+      "method": "GET",
+      "path": "/api/trademarks",
+      "endpoint": "get_trademarks"
+    },
+    {
+      "method": "POST",
+      "path": "/api/trademarks",
+      "endpoint": "add_trademark"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/trademarks/batch",
+      "endpoint": "batch_delete_trademarks"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/trademarks/{id}",
+      "endpoint": "delete_trademark"
+    },
+    {
+      "method": "PUT",
+      "path": "/api/trademarks/{id}",
+      "endpoint": "update_trademark"
+    }
+  ],
+  "categories": {
+    "trademarks": {
+      "name": "商标管理",
+      "description": "商标数据的增删改查操作",
+      "endpoints": [
+        {
+          "method": "GET",
+          "path": "/api/trademarks",
+          "name": "获取商标列表",
+          "description": "获取所有已添加的商标列表",
+          "request": {
+            "query": []
+          },
+          "response": {
+            "success": true,
+            "data": [
+              {
+                "id": "uuid-string",
+                "brandName": "APPLE",
+                "applicant": "Apple Inc.",
+                "registrationNumber": "TM001",
+                "niceClass": [
+                  "9",
+                  "35"
+                ],
+                "notes": "备注",
+                "createdAt": "2026-07-27T12:28:16",
+                "status": "pending"
+              }
+            ]
+          },
+          "status_codes": [
+            {
+              "code": 200,
+              "description": "成功"
+            }
+          ]
+        },
+        {
+          "method": "POST",
+          "path": "/api/trademarks",
+          "name": "添加商标",
+          "description": "添加一个新的商标记录",
+          "request": {
+            "body": {
+              "brandName": {
+                "type": "string",
+                "required": true,
+                "description": "商标名称",
+                "minLength": 2,
+                "maxLength": 200
+              },
+              "applicant": {
+                "type": "string",
+                "required": false,
+                "description": "申请人名称"
+              },
+              "registrationNumber": {
+                "type": "string",
+                "required": false,
+                "description": "注册号"
+              },
+              "niceClass": {
+                "type": "array",
+                "required": false,
+                "description": "尼斯分类数组",
+                "items": "string"
+              },
+              "notes": {
+                "type": "string",
+                "required": false,
+                "description": "备注"
+              }
+            }
+          },
+          "response": {
+            "success": true,
+            "data": {
+              "id": "uuid-string",
+              "brandName": "APPLE",
+              "applicant": "Apple Inc.",
+              "createdAt": "2026-07-27T12:28:16",
+              "status": "pending"
+            }
+          },
+          "status_codes": [
+            {
+              "code": 200,
+              "description": "添加成功"
+            },
+            {
+              "code": 400,
+              "description": "参数错误（名称为空、长度不符）"
+            },
+            {
+              "code": 409,
+              "description": "商标已存在"
+            }
+          ]
+        },
+        {
+          "method": "PUT",
+          "path": "/api/trademarks/{id}",
+          "name": "更新商标",
+          "description": "更新指定商标的信息",
+          "request": {
+            "params": {
+              "id": {
+                "type": "string",
+                "description": "商标ID"
+              }
+            },
+            "body": {
+              "brandName": {
+                "type": "string",
+                "required": false,
+                "description": "商标名称"
+              },
+              "applicant": {
+                "type": "string",
+                "required": false,
+                "description": "申请人"
+              },
+              "registrationNumber": {
+                "type": "string",
+                "required": false,
+                "description": "注册号"
+              },
+              "niceClass": {
+                "type": "array",
+                "required": false,
+                "description": "尼斯分类"
+              },
+              "notes": {
+                "type": "string",
+                "required": false,
+                "description": "备注"
+              }
+            }
+          },
+          "response": {
+            "success": true,
+            "data": {
+              "id": "uuid",
+              "brandName": "updated",
+              "updatedAt": "2026-07-27T12:28:16"
+            }
+          },
+          "status_codes": [
+            {
+              "code": 200,
+              "description": "更新成功"
+            },
+            {
+              "code": 400,
+              "description": "参数错误"
+            },
+            {
+              "code": 404,
+              "description": "商标不存在"
+            }
+          ]
+        },
+        {
+          "method": "DELETE",
+          "path": "/api/trademarks/{id}",
+          "name": "删除商标",
+          "description": "删除指定的商标记录",
+          "request": {
+            "params": {
+              "id": {
+                "type": "string",
+                "description": "商标ID"
+              }
+            }
+          },
+          "response": {
+            "success": true,
+            "message": "删除成功"
+          },
+          "status_codes": [
+            {
+              "code": 200,
+              "description": "删除成功"
+            },
+            {
+              "code": 404,
+              "description": "商标不存在"
+            }
+          ]
+        },
+        {
+          "method": "DELETE",
+          "path": "/api/trademarks/batch",
+          "name": "批量删除商标",
+          "description": "批量删除多个商标",
+          "request": {
+            "body": {
+              "ids": {
+                "type": "array",
+                "required": true,
+                "description": "商标ID数组",
+                "items": "string"
+              }
+            }
+          },
+          "response": {
+            "success": true,
+            "deletedCount": 3
+          },
+          "status_codes": [
+            {
+              "code": 200,
+              "description": "删除成功"
+            },
+            {
+              "code": 400,
+              "description": "参数错误（ID列表为空）"
+            }
+          ]
+        }
+      ]
+    },
+    "check": {
+      "name": "状态检查",
+      "description": "调用 WIPO API 检查商标状态和抢注情况",
+      "endpoints": [
+        {
+          "method": "POST",
+          "path": "/api/check",
+          "name": "启动检查",
+          "description": "启动商标状态检查任务（异步执行）",
+          "request": {
+            "body": {
+              "checkStatus": {
+                "type": "boolean",
+                "required": false,
+                "default": true,
+                "description": "是否检查状态"
+              },
+              "checkSquatting": {
+                "type": "boolean",
+                "required": false,
+                "default": true,
+                "description": "是否检查抢注"
+              },
+              "trademarkIds": {
+                "type": "array",
+                "required": false,
+                "description": "指定检查的商标ID（空则检查全部）"
+              }
+            }
+          },
+          "response": {
+            "success": true,
+            "message": "检查已启动，请稍后查看结果"
+          },
+          "status_codes": [
+            {
+              "code": 200,
+              "description": "启动成功"
+            },
+            {
+              "code": 400,
+              "description": "没有可检查的商标"
+            }
+          ]
+        },
+        {
+          "method": "GET",
+          "path": "/api/check/status",
+          "name": "查询检查状态",
+          "description": "查询检查任务的执行状态和结果",
+          "request": {
+            "query": []
+          },
+          "response": {
+            "status": "completed",
+            "result": {
+              "total": 10,
+              "checked": 10,
+              "errors": [
+                {
+                  "brandName": "NIKE",
+                  "stage": "状态检查",
+                  "error": "状态检查失败: 响应数据解密失败"
+                }
+              ],
+              "errorsCount": 1,
+              "failedBrands": [
+                "NIKE"
+              ],
+              "alerts": [
+                {
+                  "brandName": "BYD",
+                  "issues": [
+                    "状态异常",
+                    "疑似抢注"
+                  ],
+                  "hasIssue": true,
+                  "hasSquatting": true,
+                  "abnormalStatuses": [
+                    {
+                      "registrationNumber": "902462164",
+                      "status": "Expired",
+                      "office": "BG"
+                    }
+                  ],
+                  "squattingCases": [
+                    {
+                      "brandName": "BYD BYD AUTO",
+                      "applicant": "\"ИЙСТ МОТОР КОРПОРЕЙШЪН\" ООД",
+                      "riskLevel": "high"
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          "status_codes": [
+            {
+              "code": 200,
+              "description": "返回检查状态"
+            },
+            {
+              "code": 200,
+              "description": "status: running - 检查进行中"
+            },
+            {
+              "code": 200,
+              "description": "status: completed - 检查完成"
+            },
+            {
+              "code": 200,
+              "description": "status: error - 检查出错"
+            }
+          ]
+        }
+      ]
+    },
+    "reports": {
+      "name": "检查报告",
+      "description": "查看历史检查报告",
+      "endpoints": [
+        {
+          "method": "GET",
+          "path": "/api/reports",
+          "name": "获取报告列表",
+          "description": "获取所有历史检查报告",
+          "request": {
+            "query": []
+          },
+          "response": {
+            "success": true,
+            "data": [
+              {
+                "filename": "report_20260727_122816.json",
+                "timestamp": "2026-07-27T12:28:16",
+                "total": 10,
+                "alertsCount": 9
+              }
+            ]
+          },
+          "status_codes": [
+            {
+              "code": 200,
+              "description": "成功"
+            }
+          ]
+        },
+        {
+          "method": "GET",
+          "path": "/api/reports/{filename}",
+          "name": "获取报告详情",
+          "description": "获取指定报告的完整内容",
+          "note": "报告文件不再重复存 alerts：新报告只存 alertsCount 与 results，本接口在缺 alerts 时用 monitor.alerts_from_results() 从 results 还原；旧报告自带的 alerts 原样返回。每次检查还会另写 report_<时间戳>.summary.json（只有统计与告警定位，无案例明细），但不会被列表接口列出。",
+          "request": {
+            "params": {
+              "filename": {
+                "type": "string",
+                "description": "报告文件名"
+              }
+            }
+          },
+          "response": {
+            "success": true,
+            "data": {
+              "timestamp": "2026-07-27T12:28:16",
+              "total": 10,
+              "alertsCount": 0,
+              "alerts": [],
+              "results": []
+            }
+          },
+          "status_codes": [
+            {
+              "code": 200,
+              "description": "成功"
+            },
+            {
+              "code": 404,
+              "description": "报告不存在"
+            }
+          ]
+        }
+      ]
+    },
+    "io": {
+      "name": "导入导出",
+      "description": "商标数据的批量导入和导出",
+      "endpoints": [
+        {
+          "method": "GET",
+          "path": "/api/export",
+          "name": "导出商标",
+          "description": "导出所有商标数据",
+          "request": {
+            "query": {
+              "format": {
+                "type": "string",
+                "required": false,
+                "default": "json",
+                "description": "导出格式：json 或 csv"
+              }
+            }
+          },
+          "response": {
+            "json": "application/json 格式的商标数据",
+            "csv": "text/csv 格式的文件下载"
+          },
+          "status_codes": [
+            {
+              "code": 200,
+              "description": "导出成功"
+            },
+            {
+              "code": 400,
+              "description": "不支持的格式"
+            }
+          ]
+        },
+        {
+          "method": "POST",
+          "path": "/api/import",
+          "name": "导入商标",
+          "description": "上传并导入商标数据文件",
+          "request": {
+            "body": {
+              "file": {
+                "type": "file",
+                "required": true,
+                "description": "JSON 或 CSV 文件"
+              }
+            }
+          },
+          "response": {
+            "success": true,
+            "importedCount": 5,
+            "data": []
+          },
+          "status_codes": [
+            {
+              "code": 200,
+              "description": "导入成功"
+            },
+            {
+              "code": 400,
+              "description": "参数错误或格式不支持"
+            }
+          ]
+        }
+      ]
+    },
+    "system": {
+      "name": "系统",
+      "description": "接口契约与文档自身的元信息",
+      "endpoints": [
+        {
+          "method": "GET",
+          "path": "/api/schema",
+          "name": "获取接口契约",
+          "description": "返回本契约文档（docs/api-schema.json），供 AI 助手、前端工具与 CI 消费",
+          "request": {
+            "query": []
+          },
+          "response": {
+            "success": true,
+            "data": "契约文档（version / routes / categories）"
+          },
+          "status_codes": [
+            {
+              "code": 200,
+              "description": "成功"
+            },
+            {
+              "code": 500,
+              "description": "契约文件缺失或无法解析"
+            }
+          ]
+        }
+      ]
+    }
+  }
+}

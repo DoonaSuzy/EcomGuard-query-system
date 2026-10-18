@@ -1,0 +1,323 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WIPO 商标监控系统 - API 文档</title>
+    <link rel="stylesheet" href="/static/css/docs-viewer.css">
+    <link href="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/themes/prism-tomorrow.min.css" rel="stylesheet">
+</head>
+<body>
+    <div class="docs-container">
+        <aside class="sidebar">
+            <div class="sidebar-header">
+                <div class="logo">
+                    <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                        <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                        <path d="M14 2v6h6M16 13H8M16 17H8M10 9H8" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                    </svg>
+                    <span>API 文档</span>
+                </div>
+                <span class="version-tag">v1.0.0</span>
+            </div>
+            
+            <div class="search-box">
+                <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <circle cx="11" cy="11" r="8" stroke="currentColor" stroke-width="2"/>
+                    <path d="M21 21l-4.35-4.35" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                </svg>
+                <input type="text" id="search-input" placeholder="搜索 API..." autocomplete="off">
+            </div>
+
+            <nav class="nav-menu" id="nav-menu">
+                {% for category, info in api_definitions.items() %}
+                <div class="nav-group" data-category="{{ category }}">
+                    <div class="nav-group-header">
+                        <span class="nav-group-title">{{ info.name }}</span>
+                        <svg class="chevron" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                            <polyline points="9,18 15,12 9,6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                        </svg>
+                    </div>
+                    <div class="nav-items">
+                        {% for endpoint in info.endpoints %}
+                        <a href="#{{ endpoint.path }}-{{ endpoint.method }}" 
+                           class="nav-item" 
+                           data-search="{{ endpoint.name }} {{ endpoint.path }} {{ endpoint.description }}"
+                           data-method="{{ endpoint.method }}">
+                            <span class="method-badge {{ endpoint.method|lower }}">{{ endpoint.method }}</span>
+                            <span class="nav-item-name">{{ endpoint.name }}</span>
+                        </a>
+                        {% endfor %}
+                    </div>
+                </div>
+                {% endfor %}
+            </nav>
+
+            <div class="sidebar-footer">
+                <a href="http://localhost:5000" target="_blank" class="back-link">
+                    <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                        <path d="M19 12H5M12 19l-7-7 7-7" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                    </svg>
+                    返回主系统
+                </a>
+            </div>
+        </aside>
+
+        <main class="content">
+            <header class="content-header">
+                <div class="breadcrumb">
+                    <span>API</span>
+                    <span class="separator">/</span>
+                    <span>参考文档</span>
+                </div>
+                <div class="header-actions">
+                    <button class="btn-test-nav" id="btn-test-nav">
+                        <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                            <polygon points="5,3 19,12 5,21" fill="currentColor"/>
+                        </svg>
+                        API 测试工具
+                    </button>
+                </div>
+            </header>
+
+            <div class="content-body">
+                <section class="intro-section">
+                    <h1>WIPO 商标监控系统 API</h1>
+                    <p class="intro-desc">
+                        完整的 RESTful API 文档，提供商标管理、状态检查、报告查看等功能接口。
+                        所有接口均返回 JSON 格式数据，支持跨域访问。
+                    </p>
+                    <div class="base-url-box">
+                        <span class="base-url-label">Base URL</span>
+                        <code class="base-url">http://localhost:5000</code>
+                    </div>
+                </section>
+
+                <div id="endpoints-container">
+                    {% for category, info in api_definitions.items() %}
+                    <section class="category-section" id="category-{{ category }}">
+                        <div class="category-header">
+                            <h2>{{ info.name }}</h2>
+                            <p class="category-desc">{{ info.description }}</p>
+                        </div>
+
+                        {% for endpoint in info.endpoints %}
+                        <article class="endpoint-card" id="{{ endpoint.path }}-{{ endpoint.method }}" data-category="{{ category }}">
+                            <div class="endpoint-header">
+                                <div class="endpoint-title">
+                                    <span class="method-badge {{ endpoint.method|lower }}">{{ endpoint.method }}</span>
+                                    <code class="endpoint-path">{{ endpoint.path }}</code>
+                                </div>
+                                <button class="btn-test" 
+                                        data-method="{{ endpoint.method }}" 
+                                        data-path="{{ endpoint.path }}"
+                                        data-name="{{ endpoint.name }}">
+                                    <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                                        <polygon points="5,3 19,12 5,21" fill="currentColor"/>
+                                    </svg>
+                                    测试
+                                </button>
+                            </div>
+                            
+                            <div class="endpoint-body">
+                                <h3>{{ endpoint.name }}</h3>
+                                <p class="endpoint-desc">{{ endpoint.description }}</p>
+
+                                {% if endpoint.request.params %}
+                                <div class="params-section">
+                                    <h4>路径参数</h4>
+                                    <table class="params-table">
+                                        <thead>
+                                            <tr>
+                                                <th>参数名</th>
+                                                <th>类型</th>
+                                                <th>描述</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            {% for name, param in endpoint.request.params.items() %}
+                                            <tr>
+                                                <td><code>{{ name }}</code></td>
+                                                <td><span class="type-badge">{{ param.type }}</span></td>
+                                                <td>{{ param.description }}</td>
+                                            </tr>
+                                            {% endfor %}
+                                        </tbody>
+                                    </table>
+                                </div>
+                                {% endif %}
+
+                                {% if endpoint.request.query %}
+                                <div class="params-section">
+                                    <h4>查询参数</h4>
+                                    <table class="params-table">
+                                        <thead>
+                                            <tr>
+                                                <th>参数名</th>
+                                                <th>类型</th>
+                                                <th>必填</th>
+                                                <th>默认值</th>
+                                                <th>描述</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            {% for name, param in endpoint.request.query.items() %}
+                                            <tr>
+                                                <td><code>{{ name }}</code></td>
+                                                <td><span class="type-badge">{{ param.type }}</span></td>
+                                                <td>{{ '是' if param.required else '否' }}</td>
+                                                <td>{{ param.default if param.default else '-' }}</td>
+                                                <td>{{ param.description }}</td>
+                                            </tr>
+                                            {% endfor %}
+                                        </tbody>
+                                    </table>
+                                </div>
+                                {% endif %}
+
+                                {% if endpoint.request.body %}
+                                <div class="params-section">
+                                    <h4>请求体</h4>
+                                    <table class="params-table">
+                                        <thead>
+                                            <tr>
+                                                <th>字段名</th>
+                                                <th>类型</th>
+                                                <th>必填</th>
+                                                <th>描述</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            {% for name, param in endpoint.request.body.items() %}
+                                            <tr>
+                                                <td><code>{{ name }}</code></td>
+                                                <td><span class="type-badge">{{ param.type }}</span></td>
+                                                <td>{% if param.required %}<span class="required-mark">*</span>{% else %}否{% endif %}</td>
+                                                <td>
+                                                    {{ param.description }}
+                                                    {% if param.minLength %} ({{ param.minLength }}-{{ param.maxLength }}字符){% endif %}
+                                                    {% if param.default %} <span class="default-value">默认: {{ param.default }}</span>{% endif %}
+                                                </td>
+                                            </tr>
+                                            {% endfor %}
+                                        </tbody>
+                                    </table>
+                                </div>
+                                {% endif %}
+
+                                <div class="code-section">
+                                    <div class="code-header">
+                                        <span class="code-title">请求示例</span>
+                                        <button class="copy-btn" data-copy="curl-{{ loop.index }}">
+                                            <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                                                <rect x="9" y="9" width="13" height="13" rx="2" stroke="currentColor" stroke-width="2"/>
+                                                <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" stroke="currentColor" stroke-width="2"/>
+                                            </svg>
+                                            复制
+                                        </button>
+                                    </div>
+                                    <pre><code class="language-bash">curl -X {{ endpoint.method }} "http://localhost:5000{{ endpoint.path }}" \
+  -H "Content-Type: application/json"{% if endpoint.request.body %} \
+  -d '{{ endpoint.request.body|tojson|safe }}'{% endif %}</code></pre>
+                                </div>
+
+                                <div class="params-section">
+                                    <h4>响应字段</h4>
+                                    <div class="response-example">
+                                        <div class="code-header">
+                                            <span class="code-title">成功响应</span>
+                                            <button class="copy-btn" data-copy="response-{{ loop.index }}">
+                                                <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                                                    <rect x="9" y="9" width="13" height="13" rx="2" stroke="currentColor" stroke-width="2"/>
+                                                    <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" stroke="currentColor" stroke-width="2"/>
+                                                </svg>
+                                                复制
+                                            </button>
+                                        </div>
+                                        <pre><code class="language-json">{{ endpoint.response|tojson(indent=2)|safe }}</code></pre>
+                                    </div>
+                                </div>
+
+                                <div class="params-section">
+                                    <h4>状态码说明</h4>
+                                    <div class="status-codes">
+                                        {% for code_info in endpoint.status_codes %}
+                                        <div class="status-code-item">
+                                            <span class="status-code {{ 'success' if code_info.code < 300 else ('redirect' if code_info.code < 400 else ('client-error' if code_info.code < 500 else 'server-error')) }}">
+                                                {{ code_info.code }}
+                                            </span>
+                                            <span class="status-desc">{{ code_info.description }}</span>
+                                        </div>
+                                        {% endfor %}
+                                    </div>
+                                </div>
+                            </div>
+                        </article>
+                        {% endfor %}
+                    </section>
+                    {% endfor %}
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <div class="api-tester-modal" id="api-tester-modal">
+        <div class="modal-overlay"></div>
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2 id="tester-title">API 测试工具</h2>
+                <button class="modal-close" id="modal-close">
+                    <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                        <path d="M18 6L6 18M6 6l12 12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                    </svg>
+                </button>
+            </div>
+            <div class="modal-body">
+                <div class="tester-form">
+                    <div class="form-row">
+                        <label>请求方法</label>
+                        <select id="tester-method">
+                            <option value="GET">GET</option>
+                            <option value="POST">POST</option>
+                            <option value="PUT">PUT</option>
+                            <option value="DELETE">DELETE</option>
+                        </select>
+                    </div>
+                    <div class="form-row">
+                        <label>URL 路径</label>
+                        <div class="url-input">
+                            <span class="url-prefix">http://localhost:5000</span>
+                            <input type="text" id="tester-path" placeholder="/api/trademarks">
+                        </div>
+                    </div>
+                    <div class="form-row" id="body-row" style="display:none;">
+                        <label>请求体 (JSON)</label>
+                        <textarea id="tester-body" rows="6" placeholder='{"key": "value"}'></textarea>
+                    </div>
+                    <button class="btn-send" id="btn-send-request">
+                        <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                            <path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                        </svg>
+                        发送请求
+                    </button>
+                </div>
+                <div class="tester-result" id="tester-result" style="display:none;">
+                    <div class="result-header">
+                        <h3>响应结果</h3>
+                        <div class="result-meta">
+                            <span class="status-badge" id="result-status">--</span>
+                            <span class="time-badge" id="result-time">--</span>
+                        </div>
+                    </div>
+                    <div class="result-body">
+                        <pre><code id="result-content" class="language-json"></code></pre>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/prism.min.js"></script>
+    <script src="/static/js/docs-viewer.js"></script>
+</body>
+</html>

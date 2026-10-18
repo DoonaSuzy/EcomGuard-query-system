@@ -1,0 +1,9 @@
+name: config.yml
+description: 让贡献者知道该去哪里讨论
+contact_links:
+  - name: 使用问题与讨论
+    url: https://github.com/DoonaSuzy/WIPO_and_Brand/discussions
+    about: 不确定是不是 bug 时，请来这里而不是开 issue
+  - name: 安全漏洞
+    url: https://github.com/DoonaSuzy/WIPO_and_Brand/security/advisories/new
+    about: 涉及凭据泄露或远程风险的，请私下报告，不要开公开 issue

@@ -1,0 +1,138 @@
+name: CI
+
+# 只跑离线单元测试：不联网、不开浏览器、不调 OCR。
+# 之所以能这么轻，是因为 credit_check.py 把 camoufox/ddddocr 延迟到真正
+# 使用时才 import（见 _require_runtime_deps），纯函数与输出层无需重型依赖。
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: pytest (py${{ matrix.python }} / ${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # 主力环境是 Windows（计划任务 + PS1 脚本），Linux 用于验证脚本
+        # 没有隐含的 Windows 依赖；3.12 覆盖低版本兼容性。
+        os: [windows-latest, ubuntu-latest]
+        python: ["3.12", "3.13"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+          cache-dependency-path: requirements-dev.txt
+
+      - name: Install dev dependencies
+        # requirements-dev.txt 覆盖所有**顶层** import：pytest + Pillow
+        # (credit_check.py:37) + fastapi/httpx/pydantic (api.py)。
+        # 不装 camoufox/ddddocr——它们被延迟到 CreditChecker 实例化时才 import。
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements-dev.txt
+
+      - name: Show versions
+        run: |
+          python -c "import sys, pytest, PIL, fastapi; print('python', sys.version)"
+          python -c "import PIL, fastapi, httpx, pydantic; print('Pillow', PIL.__version__, '| fastapi', fastapi.__version__)"
+          python -m pytest --version
+
+      - name: Run offline regression tests
+        # PYTHONIOENCODING 保证 Windows runner（cp936 默认）下中文断言不炸。
+        # 显式 bash：两个 runner 行为一致，方便下面统一解析摘要行。
+        #
+        # 注：GitHub Actions 的 `shell: bash` 本身已是
+        #   bash --noprofile --norc -eo pipefail
+        # 即 -e 与 pipefail 都已开启，pytest 失败会直接让步骤失败。
+        # 下面显式写 set -o pipefail 与 rc 检查是**防御性冗余**：
+        # 本地用 `bash ci.sh` 手动复跑时没有 -e，靠这段保证行为一致。
+        shell: bash
+        env:
+          PYTHONIOENCODING: utf-8
+        run: |
+          set -o pipefail
+          python -m pytest test_regression.py -q --tb=short -rs | tee pytest.out
+          rc=$?
+          if [ "$rc" -ne 0 ]; then
+            echo "::error::pytest 失败（退出码 $rc）"
+            exit "$rc"
+          fi
+          # 不允许 skip：依赖已在 requirements-dev.txt 装齐，出现 skip 就说明
+          # 漏装（历史上 fastapi 缺失会让 11 项 API 测试静默跳过 → 假绿）。
+          if grep -qE '[0-9]+ skipped' pytest.out; then
+            echo "::error::出现 skipped 用例，说明 requirements-dev.txt 漏装依赖"
+            exit 1
+          fi
+
+  lint:
+    name: syntax & encoding check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: All Python files compile
+        run: python -m compileall -q . -x '(\.venv|__pycache__)'
+
+      - name: Sources are valid UTF-8
+        run: |
+          python - <<'PY'
+          import pathlib, sys
+          # 跳过 .venv：CI 里不存在，但本地用 tools/run_ci_lint.py 复跑这段
+          # 脚本时会扫到 2797 个第三方文件（实测 1.1s，虽不误报但纯属噪声）。
+          skip_dirs = {".git", "__pycache__", ".venv", "node_modules"}
+          bad = []
+          for p in pathlib.Path(".").rglob("*"):
+              if not p.is_file() or skip_dirs & set(p.parts):
+                  continue
+              if p.suffix.lower() not in {".py", ".md", ".txt", ".js", ".csv", ".ps1", ".yml", ".yaml"}:
+                  continue
+              try:
+                  p.read_text(encoding="utf-8-sig")
+              except UnicodeDecodeError as e:
+                  bad.append(f"{p}: {e}")
+          if bad:
+              print("\n".join(bad))
+              sys.exit(1)
+          print("all text sources decode as UTF-8")
+          PY
+
+      - name: PowerShell installer keeps UTF-8 BOM
+        # Windows PowerShell 5.1 会把无 BOM 的 UTF-8 按 GBK 解码，中文注释
+        # 与 here-string 会连环报 "Missing closing '}'"。这条断言防回归。
+        run: |
+          python - <<'PY'
+          import sys
+          p = "install_schedule_task.ps1"
+          data = open(p, "rb").read(3)
+          if data != b"\xef\xbb\xbf":
+              print(f"{p} 缺少 UTF-8 BOM: {data!r}")
+              sys.exit(1)
+          print(f"{p} BOM ok")
+          PY
+
+      - name: .env is not committed
+        run: |
+          if git ls-files --error-unmatch .env >/dev/null 2>&1; then
+            echo "::error::.env 被提交进仓库了，凭据可能泄露"
+            exit 1
+          fi
+          echo ".env 未被跟踪"

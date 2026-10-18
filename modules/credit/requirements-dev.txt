@@ -1,0 +1,25 @@
+# 开发/CI 依赖：只够跑离线单元测试
+# ---------------------------------------------------------------------------
+# 完整运行时依赖见 requirements.txt（camoufox / ddddocr / onnxruntime / opencv
+# 等，约 400MB+，还含一个 954MB 的浏览器）。CI 不需要它们，因为
+# credit_check.py 把 camoufox/ddddocr 延迟到 CreditChecker 实例化时才 import。
+#
+# 但下面这些**必须装**，它们不在延迟导入范围内：
+#   - Pillow   : credit_check.py:37 顶层 `from PIL import Image`，
+#                ocr_preprocess 要用（TestOcrPreprocess 覆盖）；
+#   - fastapi / httpx : TestApiContract 的 TestClient 依赖（11 项）。
+#               缺了会让 importorskip 静默跳过——CI 全绿但 API 零覆盖，
+#                这是比报错更糟的失败模式，故显式装齐。
+#   - pydantic : api.py 顶层 `from pydantic import BaseModel`
+#   - PyYAML   : tools/run_ci_lint.py 解析 .github/workflows/ci.yml
+#                （本地复跑 CI lint 步骤用；CI 自身不装，它直接跑 yaml 里的脚本）
+#
+# 本地跑全量测试：
+#   .venv\Scripts\python.exe -m pip install -r requirements-dev.txt
+#   .venv\Scripts\python.exe -m pytest test_regression.py -q
+pytest==9.1.1
+Pillow==13.0.0
+fastapi==0.118.3
+httpx==0.28.1
+pydantic==2.14.1
+PyYAML==6.0.3

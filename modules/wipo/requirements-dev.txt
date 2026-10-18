@@ -1,0 +1,16 @@
+# 开发与测试依赖（与 requirements.txt 分离，方便只装运行环境）
+#
+# 安装：python -m pip install -r requirements-dev.txt
+#       python -m playwright install chromium
+
+pytest==9.1.1
+pytest-asyncio==1.4.0
+pytest-html==4.2.0
+playwright==1.62.0
+httpx==0.28.1
+ruff==0.17.0
+
+# 测试库驱动：tests/conftest.py 与 tests_new/conftest.py 把 WIPO_DATABASE__URL
+# 覆盖成 sqlite+aiosqlite:///，因此跑测试必须有它。它不属于运行依赖
+# （生产用 aiomysql → MySQL），所以只声明在这里。
+aiosqlite==0.22.1

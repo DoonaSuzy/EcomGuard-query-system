@@ -1,0 +1,22 @@
+# 依赖与构建产物
+#
+# 与参考项目 Power News Aggregator 的 web/.gitignore 同一口径：
+# node_modules/ 与 dist/ 都是「一条命令就能重建」的产物，不入库。
+#
+# 本项目额外有一条兜底：app/views.py 的 _resolve_index() 在 web/dist 不存在时
+# 会回落到仓库里已跟踪的 templates/index.html（迁移前的原生版前端），
+# 所以新克隆的仓库直接 `uvicorn app.main:app` 就能打开页面，
+# 想要 Vue 版再执行 `npm install && npm run build`。
+node_modules/
+dist/
+
+# 本地环境
+.env
+.env.local
+.env.*.local
+
+# 编辑器 / 系统
+.vscode/
+.idea/
+.DS_Store
+*.log

@@ -1,0 +1,74 @@
+{
+  "trademarks": [
+    {
+      "brandName": "APPLE",
+      "applicant": "Apple Inc.",
+      "registrationNumber": "TM001",
+      "niceClass": ["9", "35"],
+      "notes": "美国苹果公司"
+    },
+    {
+      "brandName": "MICROSOFT",
+      "applicant": "Microsoft Corporation",
+      "registrationNumber": "TM002",
+      "niceClass": ["9", "42"],
+      "notes": "美国微软公司"
+    },
+    {
+      "brandName": "TESLA",
+      "applicant": "Tesla, Inc.",
+      "registrationNumber": "TM003",
+      "niceClass": ["12", "9"],
+      "notes": "美国特斯拉公司"
+    },
+    {
+      "brandName": "SAMSUNG",
+      "applicant": "Samsung Electronics Co., Ltd.",
+      "registrationNumber": "TM004",
+      "niceClass": ["9", "35"],
+      "notes": "韩国三星电子"
+    },
+    {
+      "brandName": "HUAWEI",
+      "applicant": "华为技术有限公司",
+      "registrationNumber": "TM005",
+      "niceClass": ["9", "38"],
+      "notes": "中国华为技术"
+    },
+    {
+      "brandName": "BYD",
+      "applicant": "比亚迪股份有限公司",
+      "registrationNumber": "TM006",
+      "niceClass": ["12", "9"],
+      "notes": "中国比亚迪"
+    },
+    {
+      "brandName": "NIO",
+      "applicant": "蔚来汽车科技（安徽）有限公司",
+      "registrationNumber": "TM007",
+      "niceClass": ["12", "35"],
+      "notes": "中国蔚来汽车"
+    },
+    {
+      "brandName": "XIAOMI",
+      "applicant": "小米科技有限责任公司",
+      "registrationNumber": "TM008",
+      "niceClass": ["9", "35"],
+      "notes": "中国小米科技"
+    },
+    {
+      "brandName": "ALIBABA",
+      "applicant": "阿里巴巴集团控股有限公司",
+      "registrationNumber": "TM009",
+      "niceClass": ["35", "42"],
+      "notes": "阿里巴巴集团"
+    },
+    {
+      "brandName": "BY-THE-WAY",
+      "applicant": "深圳市顺路信息技术有限公司",
+      "registrationNumber": "TM010",
+      "niceClass": ["42"],
+      "notes": "测试专用品牌（较少见，可观察抢注检测效果）"
+    }
+  ]
+}

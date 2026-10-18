@@ -1,0 +1,44 @@
+# WIPO 商标监控系统 —— 运行与测试依赖
+#
+# 这份文件是 pyproject.toml [project].dependencies 的**安装用快照**：
+#   1. 版本与本机已验证可用的版本严格一致（Python 3.13.15）；
+#   2. 方便 ``pip install -r requirements.txt`` 一次性装好，不必解析 pyproject。
+#
+# 改依赖时两处都要改，别只改一处。
+#
+# 踩坑记录（本机 Python 3.13）：lxml 4.9.3 / pydantic 2.5.0 等旧版本在 3.13 上
+# 无预编译 wheel，源码编译会失败（"Failed building wheel for pydantic-core"），
+# 因此这里全部使用 3.13 可用的版本。
+
+# ---- Web 框架（FastAPI 单一后端框架，不使用 Flask）----
+fastapi==0.143.0
+uvicorn[standard]==0.54.0
+
+# ---- 配置与校验 ----
+pydantic==2.14.0
+pydantic-settings==2.15.0
+python-dotenv==1.2.4
+
+# ---- 数据库（异步 ORM）----
+sqlalchemy[asyncio]==2.1.4
+aiomysql==0.3.2
+PyMySQL==1.2.3
+alembic==1.20.0
+
+# ---- HTTP 客户端（WIPO 私有接口）----
+requests==2.34.2
+
+# ---- 加密（WIPO 响应 AES-ECB 解密）----
+# cryptojs_aes.py 是纯 Python 实现，不依赖本包；pycryptodome 仅为
+# 旧版 import 兼容保留。
+pycryptodome>=3.20.0
+
+# ---- 导入导出 ----
+python-multipart==0.0.32
+openpyxl==3.1.5
+
+# ---- 日志 ----
+structlog==26.1.0
+
+# ==================== 开发 / 测试 ====================
+-r requirements-dev.txt

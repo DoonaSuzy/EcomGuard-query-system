@@ -1,0 +1,22 @@
+# 统一按 LF 归一化，避免 Windows 检出时混入 CRLF 造成整文件 diff
+* text=auto eol=lf
+
+# 明确为二进制的文件不做行尾转换
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.pdf binary
+*.xlsx binary
+
+# PowerShell 批处理类必须保留 CRLF
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
+
+# 带 BOM 的文件
+*.ps1 text eol=crlf working-tree-encoding=UTF-8
+
+# 导出文档按二进制对待，避免编码损坏
+*.docx binary

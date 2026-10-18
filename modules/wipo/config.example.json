@@ -1,0 +1,52 @@
+{
+  "_comment_notification": "通知服务配置 - 配置告警信息的发送渠道",
+  "notification": {
+    "channels": [
+      "email"
+    ],
+    "email": {
+      "smtp_server": "smtp.example.com",
+      "smtp_port": 587,
+      "sender": "monitor@example.com",
+      "recipients": [
+        "admin@example.com"
+      ],
+      "username": "",
+      "password": ""
+    },
+    "dingtalk": {
+      "webhook_url": ""
+    },
+    "wework": {
+      "webhook_url": ""
+    }
+  },
+  "_comment_notification_detail": {
+    "channels": ["通知渠道列表，可选值: email(邮件), dingtalk(钉钉), wework(企业微信)"],
+    "email": {
+      "smtp_server": "SMTP 服务器地址，例如: smtp.qq.com, smtp.163.com",
+      "smtp_port": "SMTP 端口，常用: 465(SSL), 587(TLS), 25(标准)",
+      "sender": "发件人邮箱地址",
+      "recipients": "收件人邮箱地址数组，支持多个",
+      "username": "SMTP 登录用户名（通常为邮箱地址）",
+      "password": "SMTP 登录密码或授权码（注意保密）"
+    },
+    "dingtalk": {
+      "webhook_url": "钉钉机器人 Webhook 地址，在钉钉群设置中获取"
+    },
+    "wework": {
+      "webhook_url": "企业微信机器人 Webhook 地址，在企微群设置中获取"
+    }
+  },
+  "_comment_schedule": "定时调度配置 - 设置每月自动执行检查的时间",
+  "schedule": {
+    "day_of_month": 1,
+    "hour": 9,
+    "minute": 0
+  },
+  "_comment_schedule_detail": {
+    "day_of_month": "每月第几天运行检查，取值范围: 1-31（若当月无该日期自动调整为月末）",
+    "hour": "运行小时（24小时制），取值范围: 0-23",
+    "minute": "运行分钟，取值范围: 0-59"
+  }
+}

@@ -1,0 +1,48 @@
+# 独立 venv（P0 改造：不再借用 camoufox-reverse-mcp 的 venv）
+.venv/
+
+# Python 缓存
+__pycache__/
+*.py[cod]
+*$py.class
+
+# 运行产物（名单与结果按需保留，这里只忽略临时/自测输出）
+credit_result_*.csv
+result_*.csv
+smoke_*.csv
+venv_selftest.csv
+logs/
+
+# FastAPI 运行产物：作业库（sqlite）与作业 CSV。
+# jobs.db 含历史查询主体名称与结果，属于业务数据，不入库。
+# 注意必须写 data/* 而不是 data/——目录级排除会让 git 不再进入该目录，
+# 后面的 !data/.gitkeep 例外就永远不生效（实测踩过）。
+data/*
+# 但保留目录占位，让新克隆也能直接启动
+!data/.gitkeep
+
+# 计划任务生成的运行入口（由 install_schedule_task.ps1 重建，
+# 内含具体 webhook 地址，不应入库）
+# 每日版与月度版是两份独立产物，两行都要写：只忽略前者的话，
+# 月度版会被误提交，而它恰恰内嵌了同一个 webhook。
+run_credit_check.bat
+run_credit_check_monthly.bat
+
+# 报告与样本（体积小但属于生成物，按需自行决定是否入库）
+*.log
+pytest.out
+
+# 前端：node_modules 与本地环境变量不入库。
+# dist/ 也不入库——它是构建产物，且 backend 找不到 dist 时会静默降级成纯 API。
+# 想让新克隆开箱即控制台，就在本地构建一次（frontend/README.md 有说明）；
+# 想入库也可以，删掉下一行即可，但每次改前端都要带一次二进制 diff。
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+frontend/*.local
+# TypeScript 增量编译缓存（构建产物，随源码重建）
+frontend/tsconfig.tsbuildinfo
+frontend/*.tsbuildinfo
+
+# 凭据（webhook key / SMTP 密码不要入库）
+.env

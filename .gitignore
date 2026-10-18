@@ -1,0 +1,42 @@
+# 聚合系统的构建产物与本地环境
+#
+# 两个模块各自的 .gitignore 只匹配 `dist/`，匹配不到聚合专用的 `dist-agg/`，
+# 所以在顶层补一条。两类产物都不入库（各有一次 `npm run build` 就能重建）：
+#   dist/      —— 模块独立运行/独立跑回归用（默认 base）
+#   dist-agg/  —— 被本聚合系统挂在子路径用（`--base=/wipo/`、`--base=/credit/`）
+dist-agg/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+test-results/
+.pytest_e2e.xml
+
+# 运行期数据
+#
+# 注意必须写 `data/*` 而不是 `data/`：目录级排除会让 git 不再进入该目录，
+# 各模块 .gitignore 里的 `!data/.gitkeep` 例外就永远不生效（实测踩过，
+# modules/credit/test_regression.py 有一条断言专门守这个）。
+data/*
+!**/data/.gitkeep
+logs/
+*.log
+*_server.log
+result_*.csv
+credit_result_*.csv
+
+# 环境变量（含 SMTP 授权码、收件人）
+.env
+.env.local
+.env.*.local
+
+# 编辑器 / 系统
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

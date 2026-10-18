@@ -1,0 +1,29 @@
+{
+  "name": "credit-check-console",
+  "version": "1.0.0",
+  "private": true,
+  "description": "营业执照状态巡检控制台 — Vue 3 Composition API + Vite + TypeScript",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vue-tsc -b && vite build",
+    "typecheck": "vue-tsc --noEmit",
+    "preview": "vite preview",
+    "gen:api": "openapi-typescript ./openapi.json --default-non-nullable false -o ./src/types.d.ts"
+  },
+  "dependencies": {
+    "@vitejs/plugin-vue": "^6.0.10",
+    "@vueuse/core": "^15.0.0",
+    "openapi-fetch": "^0.17.0",
+    "pinia": "^4.1.0",
+    "vue": "^3.5.44",
+    "vue-router": "^4.6.4"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.5",
+    "openapi-typescript": "^7.10.1",
+    "typescript": "^5.9.3",
+    "vite": "^7.3.7",
+    "vue-tsc": "^3.3.13"
+  }
+}

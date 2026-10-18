@@ -1,0 +1,36 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+
+# 环境
+venv/
+.venv/
+env/
+
+# 运行时数据
+config.json
+data/
+reports/
+logs/
+*.log
+
+# 测试缓存 / 产物
+.pytest_cache/
+.coverage
+htmlcov/
+test-results/
+
+# 迁移期临时脚本 / 日志（不要提交）
+_server.log
+_run_server.bat
+_commitmsg*.txt
+_commitmsg*.tmp
+_envprobe.py
+
+# IDE / 系统
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db

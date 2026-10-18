@@ -1,0 +1,108 @@
+# 聚合系统 —— 两个模块运行依赖的并集
+#
+# 这套版本组合已实测：在本机单 venv 里同时跑通
+#   WIPO      110 项 E2E + 43 项契约 + 68 项缺陷回归断言
+#   营业执照   189 项回归
+#   聚合层     37 项端到端（真实 Chromium）
+#
+# 冲突处理（两个模块各自 requirements.txt 不一致的地方）：
+#
+#   fastapi   WIPO 要 0.143.0，营业执照写的是 0.118.3
+#             → 取 0.143.0。营业执照的 189 项回归在 0.143.0 上全绿。
+#
+#   pydantic  WIPO 要 2.14.0，营业执照写 2.14.1
+#             → 取 2.14.0。两者互相兼容，2.14.1 只是补丁版本。
+#
+#   playwright  WIPO 要 1.62.0，营业执照写 1.61.0（camoufox 依赖它）
+#             → 取 1.62.0。camoufox 对 playwright 的依赖声明是**无版本上限**的
+#               裸依赖（`playwright`），实测 1.62.0 下 camoufox 正常工作。
+#
+#   浏览器   WIPO 的 E2E 用 playwright 自带 chromium（需 `playwright install chromium`）
+#             营业执照的铁检用 camoufox 自带的 firefox（需 `camoufox fetch`）
+#             → 两者互不影响，各装各的。
+#
+# 安装：
+#   python -m venv .venv
+#   .\.venv\Scripts\python.exe -m pip install -r requirements.txt `
+#       -i https://pypi.tuna.tsinghua.edu.cn/simple --timeout 60 --retries 3
+#   .\.venv\Scripts\python.exe -m playwright install chromium
+#   .\.venv\Scripts\python.exe -m camoufox fetch
+
+# ==================== Web 框架 ====================
+fastapi==0.143.0
+uvicorn[standard]==0.54.0
+python-multipart==0.0.32
+
+# ==================== 配置与校验 ====================
+pydantic==2.14.0
+pydantic-settings==2.15.0
+python-dotenv==1.2.4
+
+# ==================== 数据库（WIPO 用 MySQL，测试用 SQLite）====================
+sqlalchemy[asyncio]==2.1.4
+aiomysql==0.3.2
+PyMySQL==1.2.3
+alembic==1.20.0
+aiosqlite==0.22.1
+
+# ==================== 浏览器自动化（营业执照巡检）====================
+camoufox==0.4.11
+playwright==1.62.0
+ddddocr==1.6.1
+onnxruntime==1.31.0
+opencv-python==5.0.0.93
+Pillow==13.0.0
+numpy==2.5.4
+
+# ==================== HTTP / 加密 / 导入导出 ====================
+requests==2.34.2
+httpx==0.28.1
+pycryptodome>=3.20.0
+openpyxl==3.1.5
+
+# ==================== 日志 ====================
+structlog==26.1.0
+
+# ==================== 开发 / 测试 ====================
+pytest==9.1.1
+pytest-asyncio==1.4.0
+pytest-html==4.2.0
+ruff==0.17.0
+
+# ==================== 传递依赖（显式锁定以保证可复现）====================
+# camoufox / ddddocr 链
+browserforge==1.2.4
+click==8.5.0
+language-tags==1.3.1
+lxml==6.1.3
+orjson==3.13.0
+platformdirs==4.13.4
+PySocks==1.7.1
+PyYAML==6.0.3
+screeninfo==0.8.1
+tqdm==4.70.1
+typing_extensions==4.16.0
+apify_fingerprint_datapoints==0.15.0
+ua-parser==1.0.2
+ua-parser-builtins==202610
+
+# onnxruntime 链
+flatbuffers==25.12.19
+packaging==26.3
+protobuf==7.36.2
+
+# 其余
+annotated-types==0.8.0
+anyio==4.15.1
+certifi==2026.10.18
+charset-normalizer==3.5.2
+colorama==0.4.6
+greenlet==3.5.6
+h11==0.16.0
+httpcore==1.0.9
+idna==3.20
+pyee==13.0.1
+pydantic_core==2.50.0
+starlette==1.9.0
+typing-inspection==0.4.4
+urllib3==2.8.0
