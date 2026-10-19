@@ -296,6 +296,61 @@ POST /api/jobs  {"names": ["9144030071526726XG"], "mail_to": ""}
 > 注意 `notified: false` 且 `notify_error: null` —— 本次 `mail_to` 传空，
 > 属于「没让人发信」，不是发送失败。要验邮件得在 `.env.docker` 里配真 SMTP。
 
+### 7.3b 邮件推送端到端（决定性证据，已真发信）
+
+配上真实 SMTP 后重跑，**强制推送**（`always_notify: true`，原因见下）：
+
+```json
+POST /api/jobs  {"names": ["9144030071526726XG"],
+                 "mail_to": "1091158653@qq.com", "always_notify": true}
+→ 202 {"job_id":"job_20261020_063412_0dbe8f","state":"queued"}
+```
+
+约 10 秒后：
+
+```
+state        : done
+notified     : True
+notify_error : None
+```
+
+容器日志（关键三行）：
+
+```
+作业 job_20261020_063412_0dbe8f 完成，CSV=/app/data/results/...csv
+[mail] 已发送 -> 1091158653@qq.com
+作业 job_20261020_063412_0dbe8f 推送成功
+```
+
+至此整条链路闭环：**API → 作业队列 → Camoufox → 国家企业信用信息公示系统
+→ ddddocr → 解析 → MySQL → SMTP 真发信 → `notified=1`**。
+
+#### ⚠️ 一个会让人以为「邮件坏了」的设计
+
+`api.py:1089`：
+
+```python
+if not need and not req.get("always_notify"):
+    log.info("作业 %s 全部正常，跳过推送", job_id)
+    return
+```
+
+**默认只有出现异常（`alert` / `notfound` / `unknown`）才推送**。
+如果巡检的几家公司全部 `ok`，即使填了邮箱也**不会收到任何邮件**，
+且 `notified=false`、`notify_error=null`（既没发也没报错）。
+
+实测就撞到过：第一次用腾讯（`verdict: ok`）测试，`notified=false` 一度
+以为又是静默失败，查日志才看到「全部正常，跳过推送」。
+
+这是**刻意设计**（避免每天一封「一切正常」的噪音邮件），但第一次遇到
+极易误判。想「无论有没有异常都收一封」就传 `always_notify: true`——
+前端提交页与定时调度里都有这个开关（`api.py:154`，描述是「无异常也推送（周报用）」）。
+
+> 所以判断邮件是否正常，不能只看「有没有收到信」，要看作业详情的
+> `notified` + `notify_error` 两个字段：
+> `notified=true` = 发了；`notified=false + notify_error=null` = 被跳过（无异常）；
+> `notified=false + notify_error="mail: ..."` = 真失败。
+
 ### 7.4 Linux 侧回归（容器内跑 pytest）
 
 用镜像本身跑（镜像里已带 pytest / httpx / Pillow / aiosqlite，无需另装）：
@@ -356,8 +411,8 @@ docker run --rm ... -w /app/modules/wipo aggregated-inspection-app:local \
 一次性容器，容器里只做 `smtplib.SMTP_SSL(...).login(...)` 然后 `quit()`，
 **不调用 `sendmail`**，跑完立即删除临时文件。
 
-> 也就是说：**「发不出去」的风险已排除**（凭据/网络/TLS 都通），
-> 剩下唯一没验的是 `sendmail` + 真实收件人这一段。
+> 也就是说：**「发不出去」的风险已排除**（凭据/网络/TLS 都通）。
+> `sendmail` + 真实收件人这一段随后在 §7.3b 用真实作业验证通过。
 
 > 顺带一个观察：裸域 `creditchina.gov.cn` / `gsxt.gov.cn` **DNS 解析失败**
 > （`No address associated with hostname`），只有带 `www.` 的能解析。
@@ -366,10 +421,21 @@ docker run --rm ... -w /app/modules/wipo aggregated-inspection-app:local \
 
 ## 8. 尚未验证 / 下一步
 
-- **邮件实际投递**：SMTP 端口连通性、DNS、TLS+AUTH 认证均已验证（§7.6），
-  但从未真的发过一封信——`.env.docker` 里仍是 `biz@example.com` 占位地址。
-  换真实收件人后需验一次 `notified: true`。
+- **收件人要换成真正的业务人员**：§7.3b 验证时把 `MAIL_TO_BUSINESS` 临时设成了
+  测试邮箱（自收自发，证明链路通）。上线前必须改回真实收件人：
+  ```bash
+  # .env.docker 里
+  MAIL_TO_BUSINESS=<业务人员邮箱>     # 每日巡检收件人
+  MAIL_TO_MANAGER=<主管邮箱>          # 每月巡检收件人
+  # 改完重建容器
+  docker compose --env-file .env.docker up -d --no-deps app
+  ```
+  另外 `SMTP_PASS` 是 QQ 邮箱的 **16 位授权码**（不是登录密码），
+  改密码/关服务后会失效，届时 `notify_error` 会显示 `mail: ...`。
 - **开发机旧计划任务冲突**：见 §4，容器接管前先停掉 `CreditChina-LicenseCheck`
   （该任务指向 Windows 侧的旧仓库 `F:\projects\GO1\reverse-records\`，
   与 91 这台 Linux 机不是同一套东西，但**同一个业务时段**，会重复巡检）。
 - **WIPO E2E 在容器内**：需临时装 chromium，见 §7.4。
+- **91 上还跑着旧的 power-news 全家桶**（9 个容器，占 8080/3000/9090/9000-9001
+  与 3306 宿主端口）。本系统用的是 8000 与容器内 MySQL，**不冲突**；
+  但 3306 被 power-mysql 占着，如果以后要把 agg-mysql 暴露到宿主 3306 会撞车。
