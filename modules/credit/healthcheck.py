@@ -453,8 +453,8 @@ def run_checks(*, env: dict[str, str] | None = None,
 
     kwargs: dict[str, dict[str, Any]] = {
         "python": {},
-        "venv": {},
-        "deps": {},
+        "venv": {"prefix": pr.get("venv_prefix"), "base_prefix": pr.get("venv_base_prefix")},
+        "deps": {"finder": pr.get("deps_finder")},
         "browser": {"verstr_fn": pr.get("browser_verstr")},
         "companies": {"path": company_path, "reader": pr.get("companies_reader")},
         "writable": {"dirs": pr.get("writable_dirs")},

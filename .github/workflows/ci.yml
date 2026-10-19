@@ -42,7 +42,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.11", "3.12", "3.13"]
+        # 3.11 不进矩阵：requirements.txt 钉死 numpy==2.5.4（onnxruntime 链），
+        # 该版本声明 Requires-Python >=3.12，3.11 装不上（CI 首跑实测）。
+        python-version: ["3.12", "3.13"]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5

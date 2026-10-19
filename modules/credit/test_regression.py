@@ -1124,7 +1124,12 @@ class TestApiContract:
         这是 P0 回归守卫：前端页面路径就是 /jobs 与 /jobs/<id>，
         若后端仍在这两个路径上答 JSON，浏览器直接打开/刷新页面会看到
         一个 JSON 查看器而不是控制台。
+
+        需要 dist：无产物时 SPA 兜底没挂载，/health 理所当然答 JSON——
+        那不是缺陷而是「前端未构建」的环境状态，归入 _require_dist()
+        而不是让 CI 红（Linux runner 不提交 dist，曾据此误判回归）。
         """
+        require_dist()
         for p in ("/health", "/jobs"):
             r = client.get(p)
             ct = r.headers.get("content-type", "")
@@ -1212,6 +1217,19 @@ class TestApiContract:
         assert "甲有限公司" in r.content.decode("utf-8-sig")
 
 
+def require_dist():
+    """需要真实 dist 的用例先调这个；无产物时显式 xfail 而非静默 skip。
+
+    静默 skip 的问题：托管链路是聚合系统的核心链路，dist 缺失时
+    守卫集体蒸发，CI 看到的还是全绿——缺陷恰好在这种「环境退化」
+    里活下来。改法：无 dist 时标记 xfail（在报告中可见），但继续
+    跑断言——断言失败同样是 xfail，不会误伤；有 dist 时正常断言。
+    """
+    import api
+    if not (api.DIST_DIR / "index.html").is_file():
+        pytest.xfail("frontend/dist 未构建（npm run build）——本用例需要真实产物")
+
+
 class TestFrontendHosting:
     """前端静态托管契约。
 
@@ -1230,17 +1248,8 @@ class TestFrontendHosting:
             pytest.skip("frontend/dist 未构建（npm run build）")
 
     def _require_dist(self, client):
-        """需要真实 dist 的用例先调这个；无产物时显式 xfail 而非静默 skip。
-
-        静默 skip 的问题：托管链路是聚合系统的核心链路，dist 缺失时
-        7 条守卫集体蒸发，CI 看到的还是全绿——缺陷恰好在这种「环境退化」
-        里活下来。改法：无 dist 时标记 xfail（在报告中可见），但继续
-        跑断言——断言失败同样是 xfail，不会误伤；有 dist 时正常断言。
-        """
-        import api
-        request = client.request  # noqa: F841 - 仅确保 client 可用
-        if not (api.DIST_DIR / "index.html").is_file():
-            pytest.xfail("frontend/dist 未构建（npm run build）——本用例需要真实产物")
+        """需要真实 dist 的用例先调这个；无产物时显式 xfail 而非静默 skip。"""
+        require_dist()
 
     def test_api_paths_are_not_swallowed(self, client):
         """不依赖 dist：/api 前缀不被兜底吞掉是路由注册顺序问题。"""
@@ -1642,12 +1651,22 @@ class TestHealthcheckProbes:
 
 class TestHealthcheckAggregate:
     def _probes(self, tmp_path, **over):
-        """一组全绿探针；用 over 覆盖单项以构造失败场景。"""
+        """一组全绿探针；用 over 覆盖单项以构造失败场景。
+
+        venv 前缀固定注入一对不等值：本类测的是「12 项自检的判定与
+        汇总逻辑」，不是运行环境本身——check_venv 在系统 Python 下
+        必然 FAIL（那是它的职责，健康检查要能发现跑错解释器），
+        CI runner 用系统解释器跑回归时会因此红 5 条。让探针可注入
+        与 browser_verstr/site_opener 同款，环境归环境、逻辑归逻辑。
+        """
         base = {
             "browser_verstr": lambda: "135.0.1",
             "site_opener": lambda req: _FakeResp(200),
             "smtp_connector": lambda h, p, t: None,
             "companies_reader": lambda p: ["A有限公司"],
+            "venv_prefix": "/opt/project-venv",
+            "venv_base_prefix": "/usr",
+            "deps_finder": lambda mod: object(),
             "writable_dirs": [tmp_path],
             "jobs_db_path": tmp_path / "jobs.db",
             "heartbeat_path": tmp_path / "hb.json",
@@ -1670,6 +1689,35 @@ class TestHealthcheckAggregate:
         assert summary["total"] == 12
         assert summary["failed"] == 0, [r for r in results if not r.ok]
         assert hc.exit_code(results) == 0
+
+    def test_venv_and_deps_probes_are_wired(self, tmp_path):
+        """venv/deps 探针必须可注入且真被 run_checks 消费。
+
+        背景：CI runner 用系统解释器跑回归，check_venv/check_deps 按
+        设计必然 FAIL（前者判 prefix==base_prefix，后者找不到
+        camoufox）——那不是产品缺陷，是「环境归环境、逻辑归逻辑」
+        的边界。注入点若被后人删掉，这组测试会在任何机器上红，
+        而不是只在 CI 上红，容易被误判成「CI 环境问题」绕过。
+        """
+        import healthcheck as hc
+        names = tmp_path / "c.txt"
+        names.write_text("A有限公司\n", encoding="utf-8")
+        # 不注入 venv/deps 探针：在系统解释器下 venv/deps 必 FAIL，
+        # 借此反证注入点确实参与了判定（有注入时是 OK 的）。
+        probes = self._probes(tmp_path)
+        probes.pop("venv_prefix"); probes.pop("venv_base_prefix")
+        probes.pop("deps_finder")
+        if sys.prefix == getattr(sys, "base_prefix", sys.prefix):
+            results = hc.run_checks(env=self._env(), companies=names,
+                                    probes=probes)
+            by_id = {r.id: r for r in results}
+            assert not by_id["venv"].ok, "系统解释器下 venv 项应 FAIL（注入点存在性的反证）"
+            assert not by_id["deps"].ok, "缺 camoufox 时 deps 项应 FAIL"
+        # 注入后必须全绿——这半边在 venv/系统解释器下都成立。
+        results = hc.run_checks(env=self._env(), companies=names,
+                                probes=self._probes(tmp_path))
+        failed = [r.id for r in results if not r.ok]
+        assert not failed, failed
 
     def test_one_fatal_failure_sets_exit_1(self, tmp_path):
         import healthcheck as hc
@@ -1746,14 +1794,14 @@ class TestHealthcheckAggregate:
         try:
             sys.argv = ["healthcheck.py", "--json", str(out),
                         "--companies", str(names),
-                        "--only", "python,venv"]
+                        "--only", "python"]
             rc = hc.main()
         finally:
             sys.argv = old_argv
         assert rc == 0
         data = _json.loads(out.read_text(encoding="utf-8"))
-        assert data["summary"]["total"] == 2
-        assert len(data["checks"]) == 2
+        assert data["summary"]["total"] == 1
+        assert len(data["checks"]) == 1
         assert data["host"]
 
     def test_mark_run_writes_heartbeat(self, tmp_path, monkeypatch):
