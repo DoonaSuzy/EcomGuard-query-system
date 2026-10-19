@@ -22,6 +22,7 @@ cd /path/to/aggregated-system
 # 2. 填环境变量
 cp .env.docker.example .env.docker
 $EDITOR .env.docker          # 至少填 MYSQL_ROOT_PASSWORD / SMTP_* / MAIL_TO_*
+                             # 要给别人用还要把 AGG_BIND 改成 0.0.0.0（见 §3.1）
 
 # 3. 构建并启动（首次会自动拉 1.3 GB 浏览器，需等待）
 docker compose --env-file .env.docker up -d --build
@@ -35,11 +36,35 @@ docker compose logs -f app
 - `/` 聚合壳页，`#/wipo` 商标监控、`#/credit` 营业执照巡检
 - `/docs` Swagger（两个模块的接口已合并，按 tag 分组）
 
-## 3. 六个关键决策（改动前先读）
+> 打不开且 `docker compose ps` 显示 `127.0.0.1:8000->8000/tcp`，
+> 就是 `AGG_BIND` 没改，见 §3.1。
 
-### 3.1 `AGG_HOST=0.0.0.0`
-`aggregator.py:365` 默认绑 `127.0.0.1`，容器里不改则端口映射出去也连不上。
-已在 Dockerfile 与 compose 里写死。
+## 3. 八个关键决策（改动前先读）
+
+### 3.1 两个「0.0.0.0」别搞混（最容易白折腾半天的地方）
+
+这里有**两层**绑定，各管一件事，只改一层就是不通：
+
+| 变量 | 在哪生效 | 默认 | 不改会怎样 |
+|---|---|---|---|
+| `AGG_HOST` | 容器**内** uvicorn 监听地址（`aggregator.py:365`） | `127.0.0.1` | 容器内只监听回环，端口映射出去也连不上 → Dockerfile/compose 已写死 `0.0.0.0` |
+| `AGG_BIND` | **宿主机**端口发布地址（compose `ports:`） | `127.0.0.1` | 只有这台服务器自己能访问；**同事用浏览器打开是「连接被拒绝」** |
+
+所以「别人打不开」时先看 `docker ps` 的 PORTS 列：
+`127.0.0.1:8000->8000/tcp` 就是没改 `AGG_BIND`，改成 `0.0.0.0` 后应显示
+`0.0.0.0:8000->8000/tcp`。
+
+**改完必须重建容器，不能 restart**：端口映射在容器创建时固定，
+`docker compose restart` 不会重新绑定。
+
+```bash
+sed -i 's/^AGG_BIND=.*/AGG_BIND=0.0.0.0/' .env
+docker compose up -d --no-deps app     # 注意服务名是 app，不是容器名 agg-app
+```
+
+> 实测踩坑：`docker compose up -d --no-deps agg-app` 报 `no such service: agg-app`
+> —— `agg-app` 是 `container_name`，compose 的服务名是 `app`
+> （`docker compose config --services` 可查：`camoufox-init` / `mysql` / `app`）。
 
 ### 3.2 `AGG_WORKERS=1` 是硬约束
 scheduler、worker、Camoufox 实例、`check_runs` 单行状态机全是进程内单实例。
@@ -214,6 +239,29 @@ docker compose logs app | grep -E "已挂载|调度补算"
 | `GET /api/trademarks` | 200 |
 | `GET /api/schedules` | 200 |
 | `GET /openapi.json` | 21 paths / 7 tags（check、io、jobs、reports、schedules、system、trademarks） |
+
+### 7.2b 跨机访问（从 Windows 主机打过去，不是容器内自测）
+
+容器内 `curl 127.0.0.1` 只能证明「应用活着」，证明不了「别人能用」。
+把 `AGG_BIND` 从 `127.0.0.1` 改成 `0.0.0.0` 并重建容器后，从另一台机器实测：
+
+| 地址 | 结果 |
+|---|---|
+| `http://192.168.101.91:8000/health` | **200** `{"status":"ok","app":"WIPO 商标监控系统",...}` |
+| `http://192.168.101.91:8000/wipo/` | **200** |
+| `http://192.168.101.91:8000/credit/` | **200** |
+| `http://192.168.101.91:8000/api/schedules` | **200** |
+
+`Test-NetConnection 192.168.101.91 -Port 8000` → `True`。
+
+> 一个容易误判的中间态：刚 `up -d` 完立刻测会拿到 `000`（容器还在
+> `health: starting`），等 20–30 秒再测才是真实结果。我第一次就是这么
+> 误判成「绑定没生效」的。
+
+> 关于 ufw：这台机 `ufw` 是 `active`，但 8000 照样能从外部访问——
+> Docker 发布端口时走的是 iptables 的 `DOCKER` 链，**绕过 ufw 的 INPUT 规则**。
+> 所以「ufw 开着」不等于「端口被挡」，别在这上面绕弯子。
+> 反过来说：想让 ufw 真的管住容器端口，得额外配 `DOCKER-USER` 链。
 
 ### 7.3 端到端真实巡检（决定性证据）
 

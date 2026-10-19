@@ -147,6 +147,9 @@ services:
       # ---- 群机器人（可选）----
       CREDIT_WEBHOOK: ${CREDIT_WEBHOOK:-}
     ports:
+      # AGG_BIND 默认 127.0.0.1 = 只有本机能访问（安全默认）。
+      # 要从别的机器打开面板必须设 AGG_BIND=0.0.0.0，
+      # 否则浏览器里看到的是「连接被拒绝」，而不是任何应用层错误。
       - "${AGG_BIND:-127.0.0.1}:${AGG_PORT:-8000}:8000"
     volumes:
       # 浏览器本体（与 camoufox-init 共享同一个卷）
