@@ -210,6 +210,26 @@ try:
         except Exception as exc:  # noqa: BLE001
             chk("credit 提交后跳到详情页", False, f"{exc} | {page.url}")
 
+        # 定时巡检页（用户原话：「没看到能设置每日/每周/每月的地方」）
+        bad.clear()
+        page.goto(base + "/credit/schedules", wait_until="load")
+        page.wait_for_function(
+            "() => document.querySelectorAll('#app > *').length >= 1", timeout=15000)
+        chk("credit /credit/schedules 渲染",
+            page.locator("h1").first.inner_text().strip() == "定时巡检",
+            page.locator("h1").first.inner_text() if page.locator("h1").count() else "(无 h1)")
+        # 回归守卫：弹窗的开关曾用 editing 的哨兵值兼任（初始 null → 一进页面就弹出），
+        # 表现为整页被 .modal-mask 盖住、点不动「新建」。这里断言初始不弹。
+        chk("定时巡检页初始不弹配置窗", page.locator(".modal-mask").count() == 0,
+            page.locator(".modal-mask").count())
+        page.locator('button:has-text("新建定时巡检")').first.click()
+        page.locator('[aria-label="定时巡检配置"]').wait_for(timeout=5000)
+        body = page.locator('[aria-label="定时巡检配置"]').inner_text()
+        chk("定时巡检配置窗有每日/每周/每月",
+            all(w in body for w in ("每日", "每周", "每月")), body[:80])
+        chk("credit /credit/schedules 无 4xx/5xx", not bad, bad[:3])
+        page.locator('[aria-label="定时巡检配置"] button[aria-label="关闭"]').click()
+
         # 4. 跨模块切换（同一个页面内，地址不变、只换 iframe 内容）
         page.goto(base + "/", wait_until="load")
         page.click('a.tab[data-module="wipo"]')

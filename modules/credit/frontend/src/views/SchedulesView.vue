@@ -34,7 +34,11 @@ const router = useRouter()
 const store = useSchedulesStore()
 const toast = useToastStore()
 
-const editing = ref<string | null>(null)   // null = 新建，'' = 关闭，id = 编辑该条
+// 弹窗开关单独用布尔量：早前用 editing 的哨兵值（null=新建 / ''=关闭）兼任开合，
+// 而初始值就是 null，条件写成 `editing !== ''` → 首次进入页面弹窗直接盖在页面上。
+// 浏览器实测踩到：点「新建」被 .modal-mask 拦住。两个概念分开即可。
+const formOpen = ref(false)
+const editing = ref<string | null>(null)   // null = 新建，否则 = 正在编辑的 schedule_id
 const form = ref<ScheduleForm>(emptyForm())
 const previewAt = ref('')
 const saving = ref(false)
@@ -72,6 +76,7 @@ async function refreshPreview() {
 
 function openCreate() {
   editing.value = null
+  formOpen.value = true
   form.value = emptyForm()
   formErr.value = ''
   void refreshPreview()
@@ -79,13 +84,15 @@ function openCreate() {
 
 function openEdit(s: ScheduleOut) {
   editing.value = s.schedule_id
+  formOpen.value = true
   form.value = fromSchedule(s)
   formErr.value = ''
   void refreshPreview()
 }
 
 function closeForm() {
-  editing.value = ''
+  formOpen.value = false
+  editing.value = null
   formErr.value = ''
 }
 
@@ -106,7 +113,8 @@ async function save() {
       const out = await store.create(payload)
       toast.success(`已创建，下次 ${out?.human ?? ''} 触发`)
     }
-    editing.value = ''
+    editing.value = null
+    formOpen.value = false
   } catch (e) {
     formErr.value = (e as Error).message
     toast.error(`保存失败：${formErr.value}`)
@@ -213,7 +221,7 @@ onMounted(() => {
   </div>
 
   <!-- 新建 / 编辑弹窗 -->
-  <div v-if="editing !== ''" class="modal-mask" @click.self="closeForm">
+  <div v-if="formOpen" class="modal-mask" @click.self="closeForm">
     <div class="modal" role="dialog" aria-modal="true" aria-label="定时巡检配置">
       <div class="modal-head">
         <h2>{{ editing ? '编辑定时巡检' : '新建定时巡检' }}</h2>
