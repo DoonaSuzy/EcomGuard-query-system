@@ -292,16 +292,24 @@ docker run --rm ... -w /app/modules/wipo aggregated-inspection-app:local \
 > 第二处**不是放宽检查**：CI 与本地都在 git 检出内跑，断言照常生效；
 > 只有从镜像里跑时才跳过。已验证本地 `_in_git_checkout() == True`。
 
-### 7.6 SMTP 出网连通性
+### 7.6 SMTP 出网与认证
 
-容器内 TCP 实测（不发信、不用凭据）：
+容器内实测（用 `modules/credit/.env` 里的真实凭据，**只登录不发信**）：
 
-| 目标 | 结果 |
+| 项 | 结果 |
 |---|---|
-| `smtp.qq.com:465` | ✅ OK |
-| `smtp.qq.com:587` | ✅ OK |
-| `www.creditchina.gov.cn:443` | ✅ OK（112.84.222.65） |
-| `www.gsxt.gov.cn:443` | ✅ OK（124.238.251.173） |
+| TCP `smtp.qq.com:465` | ✅ OK |
+| TCP `smtp.qq.com:587` | ✅ OK |
+| **TLS + AUTH 登录** | ✅ **AUTH OK** —— 授权码有效、握手正常 |
+| TCP `www.creditchina.gov.cn:443` | ✅ OK（112.84.222.65） |
+| TCP `www.gsxt.gov.cn:443` | ✅ OK（124.238.251.173） |
+
+认证测试的做法：凭据从开发机 `.env` 读、以 `0600` 权限的临时 env 文件传给
+一次性容器，容器里只做 `smtplib.SMTP_SSL(...).login(...)` 然后 `quit()`，
+**不调用 `sendmail`**，跑完立即删除临时文件。
+
+> 也就是说：**「发不出去」的风险已排除**（凭据/网络/TLS 都通），
+> 剩下唯一没验的是 `sendmail` + 真实收件人这一段。
 
 > 顺带一个观察：裸域 `creditchina.gov.cn` / `gsxt.gov.cn` **DNS 解析失败**
 > （`No address associated with hostname`），只有带 `www.` 的能解析。
@@ -310,9 +318,9 @@ docker run --rm ... -w /app/modules/wipo aggregated-inspection-app:local \
 
 ## 8. 尚未验证 / 下一步
 
-- **邮件实际投递**：SMTP 端口连通性与 DNS 已验证（§7.6），但
-  `.env.docker` 里是 `biz@example.com` 占位地址，**从未真的发过一封信**。
-  换成真实收件人后需验一次 `notified: true`。
+- **邮件实际投递**：SMTP 端口连通性、DNS、TLS+AUTH 认证均已验证（§7.6），
+  但从未真的发过一封信——`.env.docker` 里仍是 `biz@example.com` 占位地址。
+  换真实收件人后需验一次 `notified: true`。
 - **开发机旧计划任务冲突**：见 §4，容器接管前先停掉 `CreditChina-LicenseCheck`
   （该任务指向 Windows 侧的旧仓库 `F:\projects\GO1\reverse-records\`，
   与 91 这台 Linux 机不是同一套东西，但**同一个业务时段**，会重复巡检）。
