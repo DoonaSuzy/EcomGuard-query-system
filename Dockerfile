@@ -56,14 +56,23 @@ RUN cd modules/wipo/web && npm ci --no-audit --no-fund \
 COPY modules ./modules
 COPY tools ./tools
 
-# 只构建聚合用的 dist-agg：
-#   aggregator.py 读 WIPO_DIR/web/dist-agg 与 CREDIT_DIR/frontend/dist-agg，
-#   两套产物里的 dist/（默认 base）在容器里没有消费者。
-#   脚本自身会校验 index.html 是否真的带 /wipo/ /credit/ 前缀，不对则构建失败。
+# 两套产物都要构建：dist-agg（聚合用）+ dist（模块独立运行用）。
+#
+# 曾经只构建 dist-agg，理由是「dist/ 在容器里没有消费者」。这个判断是错的，
+# 实测代价：
+#   a) modules/wipo/app/views.py:35 的 WEB_DIST 是硬编码 `web/dist`，
+#      不受 WIPO_DIST 环境变量影响；该目录不存在时 views.py:64 回落到
+#      templates/index.html（旧原生 JS 前端）。于是容器里独立跑 WIPO 时
+#      服务的是旧前端 —— 新版 Vue 的样式与修复全都不生效。
+#   b) 镜像内跑 WIPO 自己的 E2E（110 项打默认 base）时，7 项图标/下载用例
+#      因测到旧标记而失败（实测：编辑按钮宽 12 而非 28，即 CSS 完全没加载）。
+#      也就是说镜像此前不是 WIPO 测试的忠实环境，只能靠宿主机跑。
+# 不带 --agg 时脚本会先建 dist/ 再建 dist-agg/（见 tools/build_frontends.py:68），
+# 一次构建两套齐全。
 #
 # 用 python3 而不是 python：node 官方镜像只带 python3，没有 python 这个别名
 # （实测 `python: not found`，exit 127）。这是本阶段唯一的坑。
-RUN python3 tools/build_frontends.py --agg
+RUN python3 tools/build_frontends.py
 
 
 # ---------- 阶段二：Python 依赖 ----------
@@ -163,6 +172,14 @@ COPY modules ./modules
 # （StaticFiles 目录不存在，Starlette 的 redirect_slashes 把请求打回去）。
 COPY --from=frontend /src/modules/wipo/web/dist-agg ./modules/wipo/web/dist-agg
 COPY --from=frontend /src/modules/credit/frontend/dist-agg ./modules/credit/frontend/dist-agg
+
+# 独立运行版产物（默认 base）。聚合入口不读它们，但 modules 自己的
+# 托管逻辑读：wipo 是 app/views.py:35 的硬编码 `web/dist`，
+# credit 是 CREDIT_DIST 的默认值（api.py 里 BASE_DIR/"frontend"/"dist"）。
+# 缺了这两行，容器内独立跑任一模块都会掉进旧前端/无前端，
+# 镜像也就无法作为模块 E2E 的忠实环境（实测 7 项假失败）。
+COPY --from=frontend /src/modules/wipo/web/dist ./modules/wipo/web/dist
+COPY --from=frontend /src/modules/credit/frontend/dist ./modules/credit/frontend/dist
 
 # tools/ 运行期也要：compose 的 camoufox-init 用 tools/install_camoufox.py
 # 做离线安装（目标网络到 GitHub 不通，不能靠 camoufox fetch）。

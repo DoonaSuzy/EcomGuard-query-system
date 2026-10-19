@@ -25,6 +25,7 @@ import {
   type ScheduleForm,
 } from '@/stores/schedules'
 import { useToastStore } from '@/stores/toast'
+import { STATE_LABEL } from '@/api/client'
 import type { components } from '@/types'
 import EmptyState from '@/components/EmptyState.vue'
 
@@ -45,6 +46,20 @@ const saving = ref(false)
 const formErr = ref('')
 
 const names = computed(() => splitNames(form.value.namesText))
+
+/**
+ * 调度行的「上次结果」色调。
+ *
+ * 原实现是 `queued || done ? 'ok' : 'warn'`，把 failed 也归到 warn，
+ * 而 failed 在别处（JobsView / JobDetailView / OverviewView）都是 alert 红。
+ * 同一个状态在两张表里颜色不同，用户会以为看错了。这里对齐成：
+ * done/queued/running → ok，skipped → warn，failed → alert。
+ */
+function stateTone(state: string): string {
+  if (state === 'done' || state === 'queued' || state === 'running') return 'ok'
+  if (state === 'failed') return 'alert'
+  return 'warn'
+}
 
 /** 与后端 ScheduleIn 的约束对齐，前端先拦一道给出中文提示 */
 const formProblem = computed(() => {
@@ -197,8 +212,8 @@ onMounted(() => {
           </td>
           <td>
             <template v-if="s.last_state">
-              <span class="badge" :class="s.last_state === 'queued' || s.last_state === 'done' ? 'ok' : 'warn'">
-                {{ s.last_state }}
+              <span class="badge" :class="stateTone(s.last_state)">
+                {{ STATE_LABEL[s.last_state] || s.last_state }}
               </span>
               <router-link v-if="s.last_job_id" :to="`/jobs/${s.last_job_id}`" class="lnk mono">
                 {{ s.last_job_id.slice(0, 18) }}

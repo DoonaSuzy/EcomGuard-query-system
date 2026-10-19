@@ -119,6 +119,9 @@ export const STATE_LABEL: Record<string, string> = {
   done: '已完成',
   failed: '失败',
   cancelled: '已取消',
+  // 定时巡检专用：名单为空时调度器直接跳过、不建作业（schedule.py 写
+  // `last_state = "skipped"`）。缺这条，调度列表会把英文 skipped 漏到界面上。
+  skipped: '已跳过',
 }
 
 /** 判定码 → 徽章色调（对应 styles 里的 --c-ok/--c-alert/--c-warn/--c-muted） */

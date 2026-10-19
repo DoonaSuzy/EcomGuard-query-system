@@ -13,11 +13,21 @@ vendor/
 **/dist-agg/
 
 # 运行期数据与日志（卷挂载，不入镜像）
+#
+# 注意 `data/` 这个写法在 dockerignore 里是**任意深度**匹配，
+# 不只是根目录的 data/ —— 它连 modules/credit/data/ 一起排掉了。
+# 后果：modules/credit/data/.gitkeep 不进镜像，容器内跑
+# `pytest test_regression.py` 时 TestScriptIntegrity 有 1 项失败
+# （实测 253 passed / 1 failed）。那个 .gitkeep 是仓库刻意的占位标记
+# （.gitignore 用 `data/*` + `!**/data/.gitkeep` 保住它），
+# 镜像里保留它既无害也让容器成为忠实的测试环境。
 data/
 logs/
 **/*.db
 **/*.db-wal
 **/*.db-shm
+# 例外必须写在排除之后，docker 的 patternmatcher 取最后一条匹配的规则
+!**/data/.gitkeep
 
 # Python 缓存与虚拟环境
 **/__pycache__/
