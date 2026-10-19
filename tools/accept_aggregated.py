@@ -21,8 +21,15 @@ import urllib.request
 import httpx
 from playwright.sync_api import sync_playwright
 
-ROOT = r"F:\projects\GO1\aggregated-system"
-PY = os.path.join(os.environ["TEMP"], "compat_venv", "Scripts", "python.exe")
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+# 服务端解释器：优先 AGG_ACCEPT_PY，缺省用当前解释器（同一 venv 即可——
+# 本脚本只 import httpx / playwright，服务端只 import fastapi 侧依赖，
+# 两者在同一份 requirements.txt 里）。Windows 下自动补 Scripts/python.exe。
+_default_py = sys.executable
+if os.name == "nt" and os.path.basename(_default_py).lower() not in (
+        "python.exe", "pythonw.exe"):
+    _default_py = os.path.join(os.path.dirname(_default_py), "Scripts", "python.exe")
+PY = os.environ.get("AGG_ACCEPT_PY") or _default_py
 
 tmp = tempfile.mkdtemp(prefix="agg_accept_")
 env = dict(os.environ)

@@ -19,7 +19,8 @@
     python tools/build_frontends.py          # 构建两套
     python tools/build_frontends.py --agg    # 只构建 dist-agg（CI 用）
 
-前置：两个模块的 node_modules 已装好（模块仓库自己 .gitignore 了 node_modules）。
+前置：两个模块的 node_modules 缺失时脚本会自动 `npm ci`（两个模块都有
+package-lock.json，版本可复现）；本地手动装：先在各前端目录执行 `npm ci`。
 """
 from __future__ import annotations
 
@@ -28,6 +29,11 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+
+# Windows 控制台默认 GBK，打印 ✓ 等字符会 UnicodeEncodeError（实测踩过）；
+# CI 的 Linux 无此问题，这里统一兜底成可编码输出。
+if sys.stdout.encoding and sys.stdout.encoding.lower() not in ("utf-8", "utf8"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
 ROOT = Path(__file__).resolve().parent.parent
 MODULES = ROOT / "modules"
@@ -50,12 +56,18 @@ def build(module: str, web: Path, prefix: str, base_cmd: list[str], agg_only: bo
     if not web.is_dir():
         raise SystemExit(f"找不到前端目录：{web}")
     if not (web / "node_modules").is_dir():
-        raise SystemExit(
-            f"{web} 缺少 node_modules，先在该目录执行 `npm ci`（或 npm install）"
-        )
+        # CI 环境没有 node_modules（.gitignore 排除），自动 npm ci 补齐；
+        # 本地首次运行同样受益。失败信息保留人工指引。
+        print(f"  {module}: node_modules 缺失，自动 npm ci …")
+        run(["npm", "ci"], web)
+        if not (web / "node_modules").is_dir():
+            raise SystemExit(
+                f"{web} npm ci 后仍缺少 node_modules，请手动执行 `npm ci` 查看报错"
+            )
 
     if not agg_only:
         # 独立运行版：默认 base，模块自己的 dist/
+        # （CI 的 E2E job 也需要这套产物——WIPO 的 110 项 E2E 打默认 base）
         shutil.rmtree(web / "dist", ignore_errors=True)
         run(base_cmd, web)
 

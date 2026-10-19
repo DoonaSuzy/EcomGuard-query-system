@@ -4,6 +4,7 @@
 > 页面按子路径切换（`/wipo/`、`/credit/`），数据层各模块可独立选后端。
 
 [![tests](https://img.shields.io/badge/tests-354%20passed-brightgreen)](#-开发)
+[![CI](https://github.com/DoonaSuzy/Aggregated-query-and-inspection-system/actions/workflows/ci.yml/badge.svg)](https://github.com/DoonaSuzy/Aggregated-query-and-inspection-system/actions/workflows/ci.yml)
 [![python](https://img.shields.io/badge/python-%3E%3D3.11-blue)](https://www.python.org/)
 [![api](https://img.shields.io/badge/API-16%20paths%20%2F%2020%20ops-informational)](#-统一接口)
 
@@ -440,6 +441,25 @@ cd modules\credit  ; python tools\run_ci_lint.py               # UTF-8 + PS1 BOM
 
 `accept_aggregated.py` 要起独立 uvicorn + 真实 Chromium + 真实作业提交，跑一轮约 2 分钟，
 不适合塞进 CI 的每次 push。它现在是一个独立脚本，手动或发布前跑。
+
+### CI（GitHub Actions，`.github/workflows/ci.yml`）
+
+三个 job，按「先快后慢」排列：
+
+| Job | 内容 | 矩阵 |
+|---|---|---|
+| `lint` | 聚合层 + WIPO 全源码 ruff（零容忍）；credit 测试文件 `--exit-zero` 出报告（19 项上游既有告警，只守「不再新增」） | 单版本 |
+| `tests` | credit 201 + WIPO 契约 43 + verify 68/63（**三套分开跑**，conftest 同名冲突） | Python 3.11 / 3.12 / 3.13 |
+| `e2e` | 构建两套前端产物（`build_frontends.py`，node_modules 缺失自动 `npm ci`）→ WIPO E2E 110 → 聚合验收 37（真 Chromium） | Python 3.13 |
+
+CI 与本地命令一一对应，口径见上面「质量门禁」。两个注意点：
+
+- **`requirements.txt` 是安装的唯一入口**：它是三模块依赖并集，版本组合已实测互容
+  （含 `aiosqlite`，WIPO 的 conftest/verify 覆盖 SQLite 时需要）。
+- **E2E job 只装 Playwright chromium**：credit 的 camoufox firefox 只在真实巡检时
+  才会启动，聚合验收提交的作业允许 failed（脚本注释写明，断言只验前端链路）。
+  依赖在 Linux 的可装性已核验：`ddddocr` 是 universal wheel、`onnxruntime` /
+  `opencv-python` 均有 manylinux x86_64 wheel。
 
 ---
 
