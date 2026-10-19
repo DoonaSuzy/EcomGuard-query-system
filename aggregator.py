@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """聚合查询与巡检系统 —— 统一入口。
 
 一个 uvicorn 进程同时服务两个独立模块：
@@ -70,13 +69,14 @@ if "WIPO_REPORTS_DIR" not in os.environ:
     os.environ["WIPO_REPORTS_DIR"] = str(WIPO_DIR / "reports")
 
 # ---------------------------------------------------------------- 导入两个模块
-from app.api.v1 import build_api_router  # noqa: E402
-from app.core.exception_handlers import register_exception_handlers  # noqa: E402
-from app.core.middleware import RequestContextMiddleware  # noqa: E402
-from app.main import lifespan as wipo_lifespan  # noqa: E402
+from app.api.v1 import build_api_router
+from app.core.exception_handlers import register_exception_handlers
+from app.core.middleware import RequestContextMiddleware
+from app.main import lifespan as wipo_lifespan
 
-import credit_api_glue  # noqa: E402  (见文件尾部说明)
-from credit_api_glue import credit_lifespan_enter, credit_lifespan_exit  # noqa: E402
+# credit 不直接 import credit_api —— lifespan 的进入/退出被拆成两个函数，
+# 便于与 WIPO 的 lifespan 显式串联（见 credit_api_glue.py 的 docstring）。
+from credit_api_glue import credit_lifespan_enter, credit_lifespan_exit
 
 __all__ = ["app", "create_app"]
 

@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """credit 模块的接线层。
 
 为什么需要这一层
@@ -35,11 +34,10 @@ from __future__ import annotations
 import asyncio
 import logging
 
+import api as credit_api
 from fastapi import FastAPI
 
-import api as credit_api
-
-__all__ = ["router", "credit_lifespan_enter", "credit_lifespan_exit"]
+__all__ = ["credit_lifespan_enter", "credit_lifespan_exit", "router"]
 
 #: 路由直接复用 credit 的定义（不带任何改动）。
 router = credit_api.router

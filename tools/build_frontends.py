@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """构建两个模块的前端产物（两套：独立运行版 + 聚合子路径版）。
 
 为什么是两套而不是一套：
@@ -42,7 +41,7 @@ TARGETS = [
 
 def run(cmd: list[str], cwd: Path) -> None:
     print(f"\n$ {' '.join(cmd)}   (cwd={cwd})")
-    proc = subprocess.run(cmd, cwd=str(cwd), shell=(sys.platform == "win32"))
+    proc = subprocess.run(cmd, cwd=str(cwd), shell=(sys.platform == "win32"), check=False)
     if proc.returncode != 0:
         raise SystemExit(f"构建失败，退出码 {proc.returncode}：{' '.join(cmd)}")
 

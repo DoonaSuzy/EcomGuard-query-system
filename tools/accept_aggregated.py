@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """聚合系统真机验收：起 uvicorn → httpx 打接口 → Playwright 打两个前端。
 
 覆盖：壳页、两个子路径深链、跨模块切换、真实交互（新增商标 / 提交作业）、
@@ -74,7 +73,8 @@ try:
             urllib.request.urlopen(base + "/health", timeout=1)
             ready = True
             break
-        except Exception:
+        except OSError:
+            # 服务未就绪时 urlopen 抛 URLError（连接拒绝）或 TimeoutError，均属 OSError 子类
             time.sleep(0.25)
     chk("uvicorn 启动就绪", ready)
     if not ready:
