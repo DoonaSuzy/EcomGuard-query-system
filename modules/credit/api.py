@@ -755,7 +755,8 @@ router = APIRouter(prefix="/api")
 # Starlette 按注册顺序匹配，"先挂 / 再声明 /api/health" 会让接口被兜底接走。
 
 
-@router.get("/health", summary="健康检查", response_model=HealthResponse)
+@router.get("/health", summary="健康检查", response_model=HealthResponse,
+            tags=["system"])
 def health(request: Request) -> HealthResponse:
     store: Store = request.app.state.store
     try:
@@ -771,7 +772,7 @@ def health(request: Request) -> HealthResponse:
 
 
 @router.post("/jobs", response_model=JobSummary, status_code=202,
-             summary="提交巡检作业")
+             summary="提交巡检作业", tags=["jobs"])
 def create_job(req: CheckRequest, request: Request) -> JobSummary:
     store: Store = request.app.state.store
     job_id = store.create_job(req.names, req.model_dump())
@@ -780,14 +781,16 @@ def create_job(req: CheckRequest, request: Request) -> JobSummary:
     return _to_summary(store.get_job(job_id), store)
 
 
-@router.get("/jobs", response_model=list[JobSummary], summary="作业列表")
+@router.get("/jobs", response_model=list[JobSummary], summary="作业列表",
+            tags=["jobs"])
 def list_jobs(request: Request,
               limit: int = Query(50, ge=1, le=500)) -> list[JobSummary]:
     store: Store = request.app.state.store
     return [_to_summary(j, store) for j in store.list_jobs(limit)]
 
 
-@router.get("/jobs/{job_id}", response_model=JobDetail, summary="作业状态")
+@router.get("/jobs/{job_id}", response_model=JobDetail, summary="作业状态",
+            tags=["jobs"])
 def get_job(job_id: str, request: Request) -> JobDetail:
     store: Store = request.app.state.store
     j = store.get_job(job_id)
@@ -799,7 +802,7 @@ def get_job(job_id: str, request: Request) -> JobDetail:
 
 
 @router.get("/jobs/{job_id}/results", response_model=list[ResultItem],
-            summary="结果明细（可按判定过滤）")
+            summary="结果明细（可按判定过滤）", tags=["jobs"])
 def get_results(job_id: str, request: Request,
                 verdict: Verdict | None = Query(None, description="只看某类判定")):
     store: Store = request.app.state.store
@@ -812,6 +815,7 @@ def get_results(job_id: str, request: Request,
 @router.get(
     "/jobs/{job_id}/csv",
     summary="下载 CSV",
+    tags=["jobs"],
     response_class=FileResponse,
     responses={
         200: {
@@ -834,7 +838,7 @@ def download_csv(job_id: str, request: Request):
 
 
 @router.delete("/jobs/{job_id}", summary="取消排队中的作业",
-               response_model=CancelResponse)
+               response_model=CancelResponse, tags=["jobs"])
 def cancel_job(job_id: str, request: Request) -> CancelResponse:
     store: Store = request.app.state.store
     j = store.get_job(job_id)

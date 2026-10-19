@@ -127,11 +127,17 @@ try:
         page.on("response", lambda r: bad.append(f"{r.status} {r.url}")
                 if r.status >= 400 else None)
 
-        # 1. 壳页
+        # 1. 壳页：一个页面 + 顶部模块切换（模块内容在 iframe 内）
         page.goto(base + "/", wait_until="load")
         chk("壳页标题", "聚合查询与巡检系统" in page.title(), page.title())
-        chk("壳页两个入口", page.locator("a.card").count() == 2,
-            page.locator("a.card").count())
+        chk("壳页两个模块标签", page.locator("a.tab[data-module]").count() == 2,
+            page.locator("a.tab[data-module]").count())
+        shell_frame = page.frame_locator("#module-frame")
+        shell_frame.locator("#trademark-form").wait_for(timeout=20000)
+        chk("壳页默认加载 WIPO 模块",
+            shell_frame.locator("#trademark-form").count() == 1)
+        chk("壳页默认高亮 WIPO 标签",
+            page.locator('a.tab[data-module="wipo"].active').count() == 1)
 
         # 2. WIPO 模块
         bad.clear()
@@ -204,16 +210,29 @@ try:
         except Exception as exc:  # noqa: BLE001
             chk("credit 提交后跳到详情页", False, f"{exc} | {page.url}")
 
-        # 4. 跨模块切换（同一 tab）
+        # 4. 跨模块切换（同一个页面内，地址不变、只换 iframe 内容）
         page.goto(base + "/", wait_until="load")
-        page.click('a.card[href="/wipo/"]')
-        page.wait_for_selector("#trademark-form", timeout=15000)
-        chk("壳页 -> WIPO 跳转", "/wipo/" in page.url, page.url)
-        page.goto(base + "/", wait_until="load")
-        page.click('a.card[href="/credit/"]')
+        page.click('a.tab[data-module="wipo"]')
+        shell_frame.locator("#trademark-form").wait_for(timeout=20000)
+        chk("壳页切到 WIPO", "/wipo" in page.url + page.locator("#module-frame").get_attribute("src"),
+            page.locator("#module-frame").get_attribute("src"))
+        page.click('a.tab[data-module="credit"]')
+        # 先等 iframe 的 src 真的换到 /credit，再等高亮类就位。
+        # 不能用 `#app > *` 判断当前是哪个模块 —— WIPO 与 credit 都挂 `#app`，
+        # 那个条件在切换瞬间就已满足，会造成误判（实测踩过）。
         page.wait_for_function(
-            "() => document.querySelectorAll('#app > *').length >= 1", timeout=15000)
-        chk("壳页 -> credit 跳转", "/credit/" in page.url, page.url)
+            "() => (document.querySelector('#module-frame')?.getAttribute('src')"
+            " || '').includes('/credit')", timeout=20000)
+        page.wait_for_selector('a.tab[data-module="credit"].active', timeout=10000)
+        credit_frame = page.frame_locator("#module-frame")
+        credit_frame.locator("a.nav-link").first.wait_for(timeout=20000)
+        chk("壳页切到 credit（同一 URL，不跳页）",
+            page.locator("header .brand").count() == 1, page.url)
+        chk("壳页 credit 帧内有内容",
+            credit_frame.locator("a.nav-link").count() >= 2,
+            credit_frame.locator("a.nav-link").count())
+        chk("壳页切换后高亮 credit 标签",
+            page.locator('a.tab[data-module="credit"].active').count() == 1)
 
         browser.close()
 

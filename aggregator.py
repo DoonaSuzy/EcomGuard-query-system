@@ -157,58 +157,105 @@ SHELL_HTML = """<!doctype html>
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>聚合查询与巡检系统</title>
 <style>
-  :root {{ color-scheme: light dark; }}
-  * {{ box-sizing: border-box; }}
-  body {{
-    margin: 0; min-height: 100vh; display: flex; align-items: center;
-    justify-content: center; font-family: system-ui, -apple-system,
-    "Segoe UI", "Microsoft YaHei", sans-serif;
-    background: #f5f6f8; color: #1f2328;
-  }}
-  @media (prefers-color-scheme: dark) {{
-    body {{ background: #16181d; color: #e6edf3; }}
-    .card {{ background: #1f2329 !important; border-color: #30363d !important; }}
-    .card p {{ color: #9198a1 !important; }}
-  }}
-  .wrap {{ width: min(920px, 92vw); padding: 32px 0; }}
-  h1 {{ font-size: 26px; margin: 0 0 8px; letter-spacing: .3px; }}
-  .lead {{ margin: 0 0 28px; color: #59636e; font-size: 14px; }}
-  .grid {{ display: grid; gap: 18px; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); }}
-  .card {{
-    display: block; padding: 22px 24px; border-radius: 12px;
-    background: #fff; border: 1px solid #d8dee4; text-decoration: none;
-    color: inherit; transition: transform .15s ease, box-shadow .15s ease;
-  }}
-  .card:hover {{ transform: translateY(-2px); box-shadow: 0 8px 24px rgba(0,0,0,.10); }}
-  .card h2 {{ margin: 0 0 10px; font-size: 18px; }}
-  .card p {{ margin: 0 0 16px; color: #59636e; font-size: 13.5px; line-height: 1.65; }}
-  .tag {{
-    display: inline-block; padding: 3px 9px; border-radius: 999px;
-    font-size: 12px; background: #eef2f6; color: #4a5560;
-  }}
-  @media (prefers-color-scheme: dark) {{
-    .tag {{ background: #262c34; color: #a8b3bd; }}
-    .lead {{ color: #9198a1; }}
-  }}
+  :root { color-scheme: light dark;
+          --bg: #f5f6f8; --fg: #1f2328; --panel: #ffffff;
+          --line: #d8dee4; --muted: #59636e; --accent: #0b6bcb; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #16181d; --fg: #e6edf3; --panel: #1f2329;
+            --line: #30363d; --muted: #9198a1; --accent: #5aa9f5; }
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0; height: 100vh; display: flex; flex-direction: column;
+    font-family: system-ui, -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+    background: var(--bg); color: var(--fg);
+  }
+  header {
+    flex: 0 0 auto; display: flex; align-items: center; gap: 16px;
+    height: 52px; padding: 0 16px; background: var(--panel);
+    border-bottom: 1px solid var(--line);
+  }
+  .brand { font-size: 15px; font-weight: 600; white-space: nowrap; }
+  nav { display: flex; gap: 6px; }
+  .tab {
+    display: inline-flex; align-items: center; padding: 7px 14px;
+    border-radius: 8px; border: 1px solid transparent;
+    font-size: 13.5px; color: var(--muted); text-decoration: none;
+  }
+  .tab:hover { background: rgba(127, 127, 127, 0.12); }
+  .tab.active {
+    color: var(--accent); font-weight: 600;
+    background: rgba(11, 107, 203, 0.10);
+    border-color: rgba(11, 107, 203, 0.30);
+  }
+  .spacer { flex: 1 1 auto; }
+  .hint { font-size: 12.5px; color: var(--muted); }
+  .hint a { color: inherit; }
+  main { flex: 1 1 auto; position: relative; min-height: 0; }
+  iframe {
+    position: absolute; inset: 0; width: 100%; height: 100%;
+    border: 0; display: block; background: var(--bg);
+  }
 </style>
 </head>
 <body>
-<div class="wrap">
-  <h1>聚合查询与巡检系统</h1>
-  <p class="lead">两个独立模块，同一个服务入口。选择要进入的控制台。</p>
-  <div class="grid">
-    <a class="card" href="/wipo/">
-      <h2>WIPO 商标监控</h2>
-      <p>批量检查商标法律状态与疑似抢注，归档月度报告并在异常时通知。</p>
-      <span class="tag">商标 / 报告 / 通知</span>
-    </a>
-    <a class="card" href="/credit/">
-      <h2>营业执照状态巡检</h2>
-      <p>批量查询企业登记状态（存续 / 注销 / 吊销），异常时推送提醒。</p>
-      <span class="tag">作业队列 / CSV / 推送</span>
-    </a>
-  </div>
-</div>
+<header>
+  <span class="brand">聚合查询与巡检系统</span>
+  <nav>
+    <a class="tab" href="#/wipo" data-module="wipo">WIPO 商标监控</a>
+    <a class="tab" href="#/credit" data-module="credit">营业执照状态巡检</a>
+  </nav>
+  <span class="spacer"></span>
+  <span class="hint">接口文档 <a href="/docs" target="_blank" rel="noopener">/docs</a></span>
+</header>
+<main>
+  <iframe id="module-frame" title="模块内容" src="/wipo/"></iframe>
+</main>
+<script>
+  // 一个页面内切换模块：顶部导航常驻，模块内容在 iframe 里。
+  // 用 iframe 而不是把两套 SPA 合成一份，是因为两个前端的全局 CSS 同名类
+  // （.page / .btn / .card / .badge / .toast）会互相覆盖 —— 实测同页加载时
+  // 营业执照整站不可见。iframe 各自独立文档，零冲突、两边产物都不用改。
+  var MODULES = { wipo: '/wipo/', credit: '/credit/' };
+  var frame = document.getElementById('module-frame');
+  var tabs = Array.prototype.slice.call(document.querySelectorAll('.tab'));
+
+  function parse() {
+    var raw = decodeURIComponent((location.hash || '').replace(/^#\\/?/, ''));
+    if (!raw) return { m: 'wipo', sub: '' };
+    var parts = raw.split('/');
+    var m = MODULES[parts[0]] ? parts[0] : 'wipo';
+    return { m: m, sub: parts.slice(1).join('/') };
+  }
+
+  function apply() {
+    var st = parse();
+    var src = MODULES[st.m] + st.sub;
+    if (frame.getAttribute('src') !== src) frame.setAttribute('src', src);
+    tabs.forEach(function (t) {
+      t.classList.toggle('active', t.dataset.module === st.m);
+    });
+    document.title = (st.m === 'wipo' ? 'WIPO 商标监控' : '营业执照状态巡检')
+                     + ' · 聚合查询与巡检系统';
+  }
+
+  window.addEventListener('hashchange', apply);
+  apply();
+
+  // 把 iframe 内部的跳转同步回地址栏，刷新后能回到同一个页面。
+  // 用 replaceState 而不是改 location.hash，避免触发 hashchange 造成二次加载。
+  setInterval(function () {
+    var st = parse();
+    var path;
+    try { path = frame.contentWindow.location.pathname; } catch (e) { return; }
+    var base = MODULES[st.m];
+    if (!path || path.indexOf(base) !== 0) return;
+    var sub = path.slice(base.length).replace(/\\/$/, '');
+    var want = '#/' + st.m + (sub ? '/' + sub : '');
+    if (location.hash !== want) history.replaceState(null, '', want);
+  }, 500);
+</script>
 </body>
 </html>
 """
@@ -249,6 +296,16 @@ def create_app() -> FastAPI:
             "- **营业执照状态巡检** —— 企业登记状态查询（`/api/jobs`、`/api/health`…）\n\n"
             "两个模块的接口前缀不冲突，前端各挂在自己的子路径下。"
         ),
+        # 分组顺序与说明：合并后的文档里两个模块的接口必须能一眼分清归属，
+        # 否则 Swagger 会按路由注册顺序平铺（credit 原先没有 tags，全落进 default）。
+        openapi_tags=[
+            {"name": "trademarks", "description": "商标清单增删改查（WIPO 模块）"},
+            {"name": "check", "description": "商标状态与抢注检查（WIPO 模块）"},
+            {"name": "reports", "description": "检查报告归档与详情（WIPO 模块）"},
+            {"name": "io", "description": "清单导入导出（WIPO 模块）"},
+            {"name": "jobs", "description": "营业执照巡检查询作业（营业执照模块）"},
+            {"name": "system", "description": "两个模块共用的健康检查与接口自描述"},
+        ],
         lifespan=combined_lifespan,
     )
 
