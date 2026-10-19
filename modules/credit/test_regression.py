@@ -24,9 +24,8 @@ import re
 import sys
 from pathlib import Path
 
-import pytest
-
 import logkit
+import pytest
 from credit_check import (
     ALERT,
     NORMAL,
@@ -857,6 +856,7 @@ class TestDotenv:
         只报一句无关的发送失败，极难排查。
         """
         import inspect
+
         import notify
         src = inspect.getsource(notify.load_dotenv)
         assert "__file__" in src and "resolve().parent" in src, (
@@ -971,6 +971,7 @@ def client(tmp_path, monkeypatch):
     monkeypatch.setenv("CREDIT_OUT", str(tmp_path / "results"))
 
     import importlib
+
     import api
     importlib.reload(api)
 
@@ -1467,8 +1468,9 @@ class TestHealthcheckProbes:
 
         实测：本机直连信用中国首页拿到 HTTP 412，站点明明是好的。
         """
-        import healthcheck as hc
         import urllib.error
+
+        import healthcheck as hc
 
         def opener(req):
             raise urllib.error.HTTPError(req.full_url, 412, "Precondition", {}, None)
@@ -1560,9 +1562,10 @@ class TestHealthcheckProbes:
         assert ok is True and "首次" in detail
 
     def test_heartbeat_stale_is_failure(self, tmp_path):
-        import healthcheck as hc
         import json as _json
         from datetime import datetime, timedelta
+
+        import healthcheck as hc
         p = tmp_path / "hb.json"
         old = datetime.now() - timedelta(hours=50)
         p.write_text(_json.dumps({"last_run_at": old.isoformat(timespec="seconds")}),
@@ -1573,8 +1576,9 @@ class TestHealthcheckProbes:
         assert "禁用" in detail or "关机" in detail
 
     def test_heartbeat_fresh_is_ok(self, tmp_path):
-        import healthcheck as hc
         from datetime import datetime, timedelta
+
+        import healthcheck as hc
         p = tmp_path / "hb.json"
         hc.write_heartbeat(p, ok=True, failed=0, warn=0,
                            now=datetime.now() - timedelta(hours=2))
@@ -1590,9 +1594,10 @@ class TestHealthcheckProbes:
 
     def test_heartbeat_naive_and_aware_never_raises(self, tmp_path):
         """naive/aware 混算会 TypeError；两种存法都必须能算出差值。"""
-        import healthcheck as hc
         import json as _json
         from datetime import datetime, timedelta
+
+        import healthcheck as hc
         p = tmp_path / "hb.json"
         p.write_text(_json.dumps(
             {"last_run_at": (datetime.now() - timedelta(hours=1)).isoformat()}),
@@ -1607,8 +1612,9 @@ class TestHealthcheckProbes:
         assert ok2 is True
 
     def test_write_heartbeat_is_atomic_and_readable(self, tmp_path):
-        import healthcheck as hc
         import json as _json
+
+        import healthcheck as hc
         p = tmp_path / "sub" / "hb.json"
         hc.write_heartbeat(p, ok=False, failed=2, warn=1)
         data = _json.loads(p.read_text(encoding="utf-8"))
@@ -1790,8 +1796,9 @@ class TestHealthcheckAggregate:
 
     def test_main_writes_json_and_returns_code(self, tmp_path):
         """main 必须落 JSON 且退出码与汇总一致（供 .bat 判读）。"""
-        import healthcheck as hc
         import json as _json
+
+        import healthcheck as hc
         out = tmp_path / "h.json"
         rc = hc.main.__wrapped__ if hasattr(hc.main, "__wrapped__") else None
         assert rc is None  # 未被装饰；下面用 monkeypatch 走真实入口
@@ -1812,8 +1819,9 @@ class TestHealthcheckAggregate:
         assert data["host"]
 
     def test_mark_run_writes_heartbeat(self, tmp_path, monkeypatch):
-        import healthcheck as hc
         import json as _json
+
+        import healthcheck as hc
         hb = tmp_path / "hb.json"
         monkeypatch.setattr(hc, "HEARTBEAT_PATH", hb)
         names = tmp_path / "c.txt"
@@ -2025,8 +2033,9 @@ class TestNotifyMainModes:
 
     def test_health_fatal_triggers_send_when_rows_green(self, tmp_path, monkeypatch):
         """执照全绿 + 自检致命失败 → 日报仍要发（否则「服务坏了」无人知晓）。"""
-        import notify
         import json as _json
+
+        import notify
         p = self._csv(tmp_path, verdict="ok")
         h = tmp_path / "h.json"
         h.write_text(_json.dumps({
@@ -2049,8 +2058,9 @@ class TestNotifyMainModes:
 
     def test_monthly_ignores_health_failures(self, tmp_path, monkeypatch):
         """月报不复述服务健康：执照全绿就该 exit 10，不打扰主管。"""
-        import notify
         import json as _json
+
+        import notify
         p = self._csv(tmp_path, verdict="ok")
         h = tmp_path / "h.json"
         h.write_text(_json.dumps({
