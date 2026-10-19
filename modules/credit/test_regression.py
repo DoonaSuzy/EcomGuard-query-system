@@ -563,8 +563,15 @@ class TestScriptIntegrity:
         tree = ast.parse((HERE / "api.py").read_text(encoding="utf-8"))
         stdlib = {"__future__", "asyncio", "contextlib", "csv", "logging", "os",
                   "sqlite3", "threading", "time", "uuid", "datetime", "pathlib",
-                  "typing", "urllib"}
-        local = {"credit_check", "logkit", "notify"}
+                  "typing", "urllib", "json", "re"}
+        # schedule 是本仓库自己的模块（modules/credit/schedule.py），不是 PyPI 的
+        # `schedule` 包。这个区别很要紧：两者同名，若哪天有人真的 import 了
+        # 第三方 schedule 包，这里的 local 集合会让守卫失明——所以下面另外
+        # 断言同目录下确实存在 schedule.py，把「同名」这件事锁死。
+        local = {"credit_check", "logkit", "notify", "schedule"}
+        assert (HERE / "schedule.py").is_file(), (
+            "api.py 顶层 import 了 schedule，但它必须是本目录的 schedule.py；"
+            "同名 PyPI 包没有本项目需要的接口")
         # 模块名 → pip 包名（大小写/下划线差异）
         alias = {"pydantic_core": "pydantic_core", "pil": "Pillow"}
         third = set()
@@ -2182,3 +2189,797 @@ class TestScheduleDualTrigger:
         assert "月触发" in body
         assert "主触发" in body
 
+
+
+# ====================================================================
+# 应用内定时巡检（schedule.py + /api/schedules）
+#
+# 这一组用例存在的理由：修的是「界面上根本没有地方设置每日/每周/每月检查」
+# 这个具体抱怨，而它背后其实有四类会各自复发的缺陷。一条用例锚一类，
+# 而不是笼统测「调度能用」——笼统用例在回归时既不会失败也不会提示哪里坏了。
+# ====================================================================
+class TestScheduleCompute:
+    """时间推算：错月不下推、跨周不跳期、时区不丢。"""
+
+    @staticmethod
+    def _base():
+        # 2026-10-19 是周一。固定基准，避免用例随当月天数漂移。
+        from datetime import datetime
+        return datetime(2026, 10, 19, 9, 0).astimezone()
+
+    def test_monthly_keeps_unreached_day_in_current_month(self):
+        """本月的目标日还没到，就必须用本月，不能无条件下推到下月。
+
+        这是原先 main.py `_get_next_run` 那个缺陷的原型：第一步无条件
+        `month = (month % 12) + 1`，于是 10/19 启动、目标「每月 25 号」，
+        第一次要等到 11/25——整整 37 天空窗，而本月 25 号本该跑。
+        """
+        from schedule import compute_next
+        nxt = compute_next("monthly", "09:00", day=25, base=self._base())
+        assert (nxt.year, nxt.month, nxt.day) == (2026, 10, 25), (
+            f"本月 25 号还没到，下次应为本月 25 日，实际 {nxt.isoformat()}")
+        assert nxt > self._base()
+
+    def test_monthly_rolls_over_when_day_passed(self):
+        from schedule import compute_next
+        nxt = compute_next("monthly", "09:00", day=1, base=self._base())
+        assert (nxt.year, nxt.month, nxt.day) == (2026, 11, 1)
+
+    def test_monthly_february_28_always_exists(self):
+        """day 上限 28 的意义：2 月一定有这一天，不存在「本月没有该日」。
+
+        若允许 31，2 月就得在「顺延到 28/29」与「跳到 3 月」之间选一种，
+        两种都有人要，行为不可无歧义地解释。
+        """
+        from datetime import datetime
+
+        from schedule import compute_next
+        base = datetime(2027, 1, 31, 9, 0).astimezone()   # 1/31 之后
+        nxt = compute_next("monthly", "08:00", day=28, base=base)
+        assert (nxt.year, nxt.month, nxt.day) == (2027, 2, 28)
+
+    def test_weekly_can_be_within_this_week(self):
+        """基准是周一 09:00，目标「周一 23:00」：就在今天，不该跳到下周一。"""
+        from schedule import compute_next
+        nxt = compute_next("weekly", "23:00", weekday=0, base=self._base())
+        assert (nxt.year, nxt.month, nxt.day, nxt.hour) == (2026, 10, 19, 23)
+
+    def test_weekly_rolls_when_time_passed(self):
+        from schedule import compute_next
+        nxt = compute_next("weekly", "08:00", weekday=0, base=self._base())
+        assert (nxt.year, nxt.month, nxt.day) == (2026, 10, 26)
+
+    def test_daily_same_day_and_next_day(self):
+        from schedule import compute_next
+        assert compute_next("daily", "23:00", base=self._base()).day == 19
+        assert compute_next("daily", "08:00", base=self._base()).day == 20
+
+    def test_result_always_carries_timezone(self):
+        """结果必须带时区。
+
+        库里存不带时区的 "2026-10-20T09:00:00" 时，无从判断它是本机时间
+        还是 UTC；一旦按错的那侧解释，就是「差 8 小时」这种极难自证的错。
+        """
+        from schedule import compute_next
+        for freq, kw in (("daily", {}), ("weekly", {"weekday": 3}),
+                         ("monthly", {"day": 5})):
+            nxt = compute_next(freq, "07:15", base=self._base(), **kw)
+            assert nxt.tzinfo is not None, f"{freq} 返回了无时区时间"
+
+    def test_bad_time_string_falls_back_not_raises(self):
+        """坏配置不能让调度线程整体停摆：回落 09:00 而不是抛异常。"""
+        from schedule import compute_next
+        assert compute_next("daily", "乱写", base=self._base()).hour == 9
+
+    def test_unknown_freq_raises(self):
+        """频率是枚举，写错必须响亮失败——静默当成每日会天天误发邮件。"""
+        from schedule import compute_next
+        with pytest.raises(ValueError):
+            compute_next("hourly", "09:00", base=self._base())
+
+    def test_describe_is_human_readable(self):
+        from schedule import describe
+        assert describe("weekly", "09:30", weekday=0) == "每周一 09:30"
+        assert describe("monthly", "09:30", day=25) == "每月 25 日 09:30"
+        assert describe("daily", "09:30") == "每日 09:30"
+
+
+class TestSchedulerTick:
+    """触发器：到点触发、同刻不重复、关机后只补一次、停用不跑。"""
+
+    @pytest.fixture()
+    def env(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("CREDIT_DB", str(tmp_path / "jobs.db"))
+        monkeypatch.setenv("CREDIT_OUT", str(tmp_path / "out"))
+        import importlib
+
+        import api
+        importlib.reload(api)
+        import schedule as sched
+        importlib.reload(sched)
+        store = api.Store(api.DB_TARGET)
+
+        class FakeWorker:
+            def __init__(self):
+                self.q = []
+
+            def submit(self, job_id):
+                self.q.append(job_id)
+
+        w = FakeWorker()
+        return api, sched, store, w, sched.Scheduler(store, w)
+
+    @staticmethod
+    def _at(h, m=0):
+        from datetime import datetime
+        return datetime(2026, 10, 19, h, m).astimezone()
+
+    def _mk(self, api, sched, store, at_time, next_at):
+        return store.add_schedule({
+            "name": "测试", "freq": "daily", "at_time": at_time,
+            "names": '["甲公司","乙公司"]',
+            "next_run_at": sched._iso(next_at)})
+
+    def test_fires_when_due(self, env):
+        """到点即触发；**整点那一秒也要触发**。
+
+        判定是 `due <= now` 而不是 `due < now`：轮询间隔 30 秒，
+        若要求严格大于，09:00:00 这一轮会判「还没到」，要等 09:00:30
+        才跑——多等半分钟不影响业务，但「09:00 触发」应该准点。
+        """
+        api, sched, store, w, sc = env
+        self._mk(api, sched, store, "09:00", self._at(9))
+        # 差一分钟：不触发
+        assert sc.tick(now=self._at(8, 59)) == []
+        assert w.q == []
+        # 整点：触发
+        fired = sc.tick(now=self._at(9, 0))
+        assert len(fired) == 1 and len(w.q) == 1
+
+    def test_does_not_fire_twice_for_same_slot(self, env):
+        """先推进 next_run_at 再提交作业，是为了让「提交到一半被杀」
+
+        也不会在同一时刻重复触发。这条断言直接锁住那个顺序。
+        """
+        api, sched, store, w, sc = env
+        self._mk(api, sched, store, "09:00", self._at(9))
+        sc.tick(now=self._at(9, 1))
+        sc.tick(now=self._at(9, 2))
+        assert len(w.q) == 1, "同一时刻被触发了两次"
+
+    def test_advance_writes_both_marker_and_next(self, env):
+        api, sched, store, _w, sc = env
+        sid = self._mk(api, sched, store, "09:00", self._at(9))
+        sc.tick(now=self._at(9, 1))
+        s = store.get_schedule(sid)
+        assert s["last_run_at"], "last_run_at 没写，补跑判断会失真"
+        assert s["next_run_at"] and s["next_run_at"] > s["last_run_at"]
+
+    def test_catch_up_exactly_once_after_downtime(self, env):
+        """关机三天后启动：补跑 1 次，不追历史。
+
+        补跑是必要的——「每天检查」若因为重启就整天不查，业务侧会当成没配。
+        但只能补 1 次：追 3 次会把目标站打成连续请求，且历史那两天已经没意义。
+        """
+        api, sched, store, w, sc = env
+        self._mk(api, sched, store, "09:00", self._at(9))
+        sc.tick(now=self._at(9) + __import__("datetime").timedelta(days=3))
+        assert len(w.q) == 1, f"应只补跑 1 次，实际 {len(w.q)} 次"
+        sc.tick(now=self._at(9) + __import__("datetime").timedelta(days=3, minutes=1))
+        assert len(w.q) == 1, "补跑之后又开始追历史了"
+
+    def test_disabled_never_fires(self, env):
+        api, sched, store, w, sc = env
+        sid = self._mk(api, sched, store, "09:00", self._at(9))
+        store.update_schedule(sid, {"enabled": False})
+        assert sc.tick(now=self._at(9, 5)) == []
+        assert w.q == []
+
+    def test_missing_next_run_is_backfilled_not_fired(self, env):
+        """老记录没有 next_run_at：补算一次，不当场触发。
+
+        当场触发会让「刚升级完就莫名其妙跑一批」——那批作业没人预期，
+        而且时间点通常不对。
+        """
+        _, _, store, w, sc = env
+        sid = store.add_schedule({
+            "name": "旧记录", "freq": "daily", "at_time": "09:00",
+            "names": '["甲"]', "next_run_at": ""})
+        fired = sc.tick(now=self._at(9, 5))
+        assert fired == [] and len(w.q) == 0
+        assert store.get_schedule(sid)["next_run_at"]
+
+    def test_empty_names_skips_and_records_reason(self, env):
+        """名单为空时不提交作业，但要把原因记进 last_error。
+
+        静默跳过的问题：用户以为在跑，实际每次都被跳过，界面上什么也没有。
+        """
+        _, sched, store, w, sc = env
+        sid = store.add_schedule({
+            "name": "空名单", "freq": "daily", "at_time": "09:00",
+            "names": "[]", "next_run_at": sched._iso(self._at(9))})
+        assert sc.tick(now=self._at(9, 1)) == []
+        assert w.q == []
+        s = store.get_schedule(sid)
+        assert s["last_state"] == "skipped" and s["last_error"]
+
+    def test_one_broken_schedule_does_not_stop_others(self, env):
+        """一条坏配置不该让其余调度集体停摆。"""
+        api, sched, store, w, sc = env
+        store.add_schedule({
+            "name": "坏的", "freq": "daily", "at_time": "09:00",
+            "names": "not-json", "next_run_at": sched._iso(self._at(9))})
+        self._mk(api, sched, store, "09:00", self._at(9))
+        fired = sc.tick(now=self._at(9, 1))
+        assert len(fired) == 1 and len(w.q) == 1
+
+
+class TestScheduleApi:
+    """接口契约：路由挂载、前缀、校验、以及「手动触发不顺延」这条业务规则。"""
+
+    @pytest.fixture()
+    def client(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("CREDIT_DB", str(tmp_path / "jobs.db"))
+        monkeypatch.setenv("CREDIT_OUT", str(tmp_path / "out"))
+        import importlib
+
+        import api
+        importlib.reload(api)
+
+        class DummyWorker(api.Worker):
+            """不消费队列：否则一提交就真去开 Camoufox 联网抓取。"""
+
+            def __init__(self, store):
+                super().__init__(store)
+                self.q = []
+
+            def start(self):
+                pass
+
+            def submit(self, job_id):
+                self.q.append(job_id)
+
+            def stop(self):
+                pass
+
+        api.Worker = DummyWorker
+        from fastapi.testclient import TestClient
+        with TestClient(api.app) as c:
+            yield c
+
+    @staticmethod
+    def _body(**kw):
+        body = {"name": "华东每日", "freq": "daily", "at_time": "09:30",
+                "names": ["甲公司", "乙公司"]}
+        body.update(kw)
+        return body
+
+    def test_all_routes_under_api_prefix(self, client):
+        """调度接口必须在 /api 下。
+
+        SPA 的页面路径是 /schedules，接口若也占 /schedules，生产态托管 dist 时
+        用户刷新页面会拿到 JSON（历史坑：/jobs 曾经就是这个症状：深链打不开）。
+        断言读 openapi 而不是 app.routes —— 后者被 include_router 包了一层
+        `_IncludedRouter`，没有 .path，按它写会得到 AttributeError 而非断言失败。
+        """
+        paths = [p for p in client.app.openapi()["paths"] if "schedule" in p]
+        assert paths, "没找到任何调度路由"
+        for p in paths:
+            assert p.startswith("/api/"), f"{p} 没挂 /api 前缀"
+
+    def test_create_list_delete_roundtrip(self, client):
+        r = client.post("/api/schedules", json=self._body())
+        assert r.status_code == 201, r.text
+        d = r.json()
+        sid = d["schedule_id"]
+        assert d["enabled"] is True and d["count"] == 2
+        assert d["names"] == ["甲公司", "乙公司"]
+        assert d["human"] == "每日 09:30"
+        assert d["next_run_at"], "新建后必须有下次触发时间"
+        assert client.get("/api/schedules").json()[0]["schedule_id"] == sid
+        assert client.delete(f"/api/schedules/{sid}").status_code == 200
+        assert client.get("/api/schedules").json() == []
+
+    def test_comment_lines_stripped_from_names(self, client):
+        r = client.post("/api/schedules",
+                        json=self._body(names=["甲", "#这行是注释", "乙", "甲"]))
+        assert r.json()["names"] == ["甲", "乙"]
+        assert r.json()["count"] == 2
+
+    def test_rejects_malformed_time(self, client):
+        """9:30 / 25:00 / 空 都要 422，不能静默当成 09:00。
+
+        静默回落只适合「库里已有的坏数据」；用户新填的东西必须当场报错。
+        """
+        for bad in ("9:30", "25:00", "", "09-30", "0930"):
+            r = client.post("/api/schedules", json=self._body(at_time=bad))
+            assert r.status_code == 422, f"{bad!r} 应该被拒，实际 {r.status_code}"
+
+    def test_rejects_day_over_28(self, client):
+        r = client.post("/api/schedules",
+                        json=self._body(freq="monthly", day=31))
+        assert r.status_code == 422, "day>28 应被拒（该月可能没有这一天）"
+
+    def test_rejects_reversed_delay(self, client):
+        r = client.post("/api/schedules",
+                        json=self._body(min_delay=10, max_delay=2))
+        assert r.status_code == 422
+
+    def test_toggle_off_then_on_recomputes(self, client):
+        sid = client.post("/api/schedules", json=self._body()).json()["schedule_id"]
+        off = client.post(f"/api/schedules/{sid}/toggle",
+                          params={"enabled": "false"}).json()
+        assert off["enabled"] is False
+        on = client.post(f"/api/schedules/{sid}/toggle",
+                         params={"enabled": "true"}).json()
+        assert on["enabled"] is True and on["next_run_at"], (
+            "重新启用必须重算下次时间，否则会沿用停用期间的过期时刻")
+
+    def test_run_now_does_not_shift_next_run(self, client):
+        """「立刻执行」不顺延正常节奏。
+
+        否则周五临时点一下，周一的定时就整周不跑了——这是最容易写错、
+        又最难在界面上发现的一条。
+        """
+        sid = client.post("/api/schedules", json=self._body()).json()["schedule_id"]
+        before = client.get("/api/schedules").json()[0]["next_run_at"]
+        r = client.post(f"/api/schedules/{sid}/run")
+        assert r.status_code == 202, r.text
+        assert r.json()["state"] == "queued"
+        after = client.get("/api/schedules").json()[0]["next_run_at"]
+        assert after == before, f"手动触发改动了下次时间：{before} → {after}"
+
+    def test_update_recomputes_next_run(self, client):
+        sid = client.post("/api/schedules", json=self._body()).json()["schedule_id"]
+        r = client.put(f"/api/schedules/{sid}",
+                       json=self._body(freq="monthly", day=5, at_time="18:00"))
+        j = r.json()
+        assert j["human"] == "每月 5 日 18:00"
+        assert j["next_run_at"].endswith("18:00:00+08:00")
+
+    def test_preview_does_not_persist(self, client):
+        """预览是纯计算：填表过程中不该往库里塞半成品配置。"""
+        r = client.get("/api/schedules/preview",
+                       params={"freq": "weekly", "at_time": "08:00", "weekday": 2})
+        assert r.status_code == 200
+        assert r.json()["human"] == "每周三 08:00"
+        assert client.get("/api/schedules").json() == []
+
+    def test_404_on_missing_schedule(self, client):
+        for r in (client.put("/api/schedules/nope", json=self._body()),
+                  client.post("/api/schedules/nope/run"),
+                  client.post("/api/schedules/nope/toggle",
+                              params={"enabled": "true"}),
+                  client.delete("/api/schedules/nope")):
+            assert r.status_code == 404, f"{r.request.method} 应 404"
+
+    def test_openapi_declares_schedule_schemas(self, client):
+        """每个调度接口都有具名 JSON schema 的 2xx 响应。
+
+        这条守的是仓库已有的 test_openapi_has_no_opaque_response_schema 那条约束：
+        返回 dict 而非 response_model 时，前端 openapi-fetch 生成出来是 unknown，
+        只能手写 as 断言——错误码路径就是这么漏的（extractErrorMessage 曾把
+        所有非 2xx 都当成「网络不可达」）。
+        """
+        spec = client.get("/openapi.json").json()
+        schemas = spec["components"]["schemas"]
+        assert {"ScheduleIn", "ScheduleOut", "SchedulePreview",
+                "ScheduleDeleteResponse"} <= set(schemas)
+
+        def ref_of(resp):
+            """取响应体的具名 schema 引用；数组要往里再走一层 items。
+
+            列表接口的 schema 是 {"type":"array","items":{"$ref":...}}，
+            只看顶层 $ref 会把列表接口误判成「没有具名 schema」。
+            """
+            content = resp.get("content") or {}
+            schema = content.get("application/json", {}).get("schema", {})
+            if "$ref" in schema:
+                return schema["$ref"]
+            return schema.get("items", {}).get("$ref", "")
+
+        checked = 0
+        for path, ops in spec["paths"].items():
+            if "schedule" not in path:
+                continue
+            for method, op in ops.items():
+                if method not in ("get", "post", "put", "delete"):
+                    continue
+                two_xx = [c for c in op["responses"] if c.startswith("2")]
+                assert two_xx, f"{method.upper()} {path} 没有声明 2xx 响应"
+                for code in two_xx:
+                    ref = ref_of(op["responses"][code])
+                    assert ref.startswith("#/components/schemas/"), (
+                        f"{method.upper()} {path} {code} 的响应没有具名 schema")
+                    checked += 1
+        # 逐条数：list 200 / create 201 / preview 200 / update 200 /
+        # delete 200 / run 202 / toggle 200 = 7
+        assert checked == 7, (
+            f"检查到 {checked} 个 2xx 响应，与预期的 7 个接口不符——"
+            "新增调度接口时请同步这条口径")
+
+
+    def test_delete_returns_schema_not_empty_body(self, client):
+        """删除返回 {"deleted": true} 而不是裸 204：前端要能区分「删掉了」
+
+        与「本来就不存在」——后者走 404 分支。裸 204 两者无法区分。
+        """
+        sid = client.post("/api/schedules", json=self._body()).json()["schedule_id"]
+        d = client.delete(f"/api/schedules/{sid}")
+        assert d.status_code == 200
+        assert d.json() == {"deleted": True, "schedule_id": sid}
+
+
+
+class TestContactValidation:
+    """推送达人（邮箱 / webhook）的校验与归一。
+
+    这一组修的是「填写邮箱和微信那几步有点问题」这个抱怨。原先整条链路
+    有三处各自独立、但症状都是「填了没反应」的缺陷：
+
+      1. api.py 从不 load_dotenv() → SMTP_HOST 恒空 → Web 提交的作业
+         一封邮件都发不出去，而且只在后台日志里留一行；
+      2. 收件人用 mail_to.split(",") 解析，而前端允许中文逗号 →
+         `a@x.com，b@y.com` 被当成一个地址静默吞掉；
+      3. webhook 前后端都只判 http(s):// 前缀 → 光秃秃的 `https://`
+         能提交，跑到推送时才抛异常，同样只在日志里。
+    """
+
+    @pytest.fixture()
+    def client(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("CREDIT_DB", str(tmp_path / "jobs.db"))
+        monkeypatch.setenv("CREDIT_OUT", str(tmp_path / "out"))
+        import importlib
+
+        import api
+
+        importlib.reload(api)
+
+        class IdleWorker(api.Worker):
+            """不消费队列：邮箱/webhook 校验与真正的浏览器抓取无关。"""
+
+            def __init__(self, store):
+                super().__init__(store)
+                self.q = []
+
+            def start(self):
+                pass
+
+            def submit(self, job_id):
+                self.q.append(job_id)
+
+            def stop(self):
+                pass
+
+        api.Worker = IdleWorker
+        from fastapi.testclient import TestClient
+        with TestClient(api.app) as c:
+            yield c
+
+    @staticmethod
+    def _request_of(client, job_id):
+        r = client.get(f"/api/jobs/{job_id}")
+        assert r.status_code == 200
+        return r.json()
+
+    def test_chinese_comma_recipients_are_normalized(self, client):
+        """中文逗号 / 全角分号 / 空格混用都要归一成英文逗号。
+
+        原先 `split(",")` 只认英文逗号，`a@x.com，b@y.com` 整串被当成
+        **一个** 地址交给 send_mail：SMTP 要么报 501，要么只投第一个。
+        用户看到的是「填了两个只收到一个」，且日志里没有任何线索。
+        """
+        import json
+        import sqlite3
+        r = client.post("/api/jobs", json={
+            "names": ["甲"], "mail_to": "a@x.com，b@y.com；  c@z.com"})
+        assert r.status_code == 202, r.text
+        db = client.app.state.store.path
+        conn = sqlite3.connect(db)
+        conn.row_factory = sqlite3.Row
+        raw = conn.execute("SELECT request FROM jobs ORDER BY rowid DESC LIMIT 1"
+                           ).fetchone()["request"]
+        assert json.loads(raw)["mail_to"] == "a@x.com,b@y.com,c@z.com"
+
+    def test_rejects_malformed_recipient(self, client):
+        """明显不是邮箱的输入必须当场 422，不能等到跑完才失败。"""
+        for bad in ("not-an-email", "a@x", "a@@x.com", "a@x.com,,@y.com"):
+            r = client.post("/api/jobs", json={"names": ["甲"], "mail_to": bad})
+            assert r.status_code == 422, f"{bad!r} 应被拒，实际 {r.status_code}"
+
+    def test_empty_recipient_becomes_null(self, client):
+        """只填了分隔符（「,」或空格）等于没填，不该存成空串。"""
+        import json
+        import sqlite3
+        r = client.post("/api/jobs", json={"names": ["甲"], "mail_to": " , ， "})
+        assert r.status_code == 202, r.text
+        conn = sqlite3.connect(client.app.state.store.path)
+        conn.row_factory = sqlite3.Row
+        raw = conn.execute("SELECT request FROM jobs ORDER BY rowid DESC LIMIT 1"
+                           ).fetchone()["request"]
+        assert json.loads(raw)["mail_to"] is None
+
+    def test_rejects_bare_scheme_webhook(self, client):
+        """`https://` 光秃秃放行是原先的真实缺陷：能提交，推送时抛异常，
+
+        而异常只进日志 → 界面上永远是「未推送」，无从判断是配错了。
+        """
+        for bad in ("https://", "http://", "ftp://a.com/hook", "a.com/hook",
+                    "https:// /path"):
+            r = client.post("/api/jobs", json={"names": ["甲"], "webhook": bad})
+            assert r.status_code == 422, f"{bad!r} 应被拒，实际 {r.status_code}"
+
+    def test_accepts_real_webhook(self, client):
+        r = client.post("/api/jobs", json={
+            "names": ["甲"],
+            "webhook": "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=abc"})
+        assert r.status_code == 202, r.text
+
+    def test_schedule_inherits_same_validation(self, client):
+        """调度用的是同一套校验（ScheduleIn 也走了 parse_addrs 口径）。"""
+        base = {"name": "t", "freq": "daily", "at_time": "09:00", "names": ["甲"]}
+        assert client.post("/api/schedules",
+                           json={**base, "mail_to": "a@x.com，b@y.com"}).status_code == 201
+        assert client.post("/api/schedules",
+                           json={**base, "mail_to": "nope"}).status_code == 422
+        assert client.post("/api/schedules",
+                           json={**base, "webhook": "https://"}).status_code == 422
+
+
+class TestNotifyFailureSurfaced:
+    """推送失败必须能从接口上看见，而不是只躺在后台日志里。"""
+
+    @pytest.fixture()
+    def store(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("CREDIT_DB", str(tmp_path / "jobs.db"))
+        monkeypatch.setenv("CREDIT_OUT", str(tmp_path / "out"))
+        import importlib
+
+        import api
+
+        importlib.reload(api)
+        return api, api.Store(api.DB_TARGET)
+
+    def _mkjob(self, api, store):
+        req = {"names": ["甲"], "mail_to": "a@x.com", "webhook": None,
+               "always_notify": True, "min_delay": 0, "max_delay": 0}
+        job_id = store.create_job(["甲"], req)
+        store.add_result(job_id, 0, {
+            "输入名称": "甲", "匹配名称": "甲", "统一社会信用代码": "91",
+            "登记状态": "存续", "判定": "ok", "主体类型": "", "数据源": "",
+            "记录数": 1, "详情URL": "", "备注": ""})
+        store.set_state(job_id, "done")
+        return job_id
+
+    def test_missing_smtp_is_recorded_on_job(self, store, monkeypatch):
+        """没配 SMTP_HOST 时，作业上要留下可读原因。
+
+        原先这个分支只 append 到局部 errors 然后 log.error，跑的是一次
+        「假装成功」——notified 仍是 0，界面显示「未推送」，
+        但用户分不清是没跑完、被跳过还是配错了。
+        """
+        api, st = store
+        monkeypatch.delenv("SMTP_HOST", raising=False)
+        job_id = self._mkjob(api, st)
+        w = object.__new__(api.Worker)
+        w.store = st
+        w._maybe_notify(job_id, [{"判定": "ok", "输入名称": "甲"}],
+                        {"mail_to": "a@x.com", "webhook": None,
+                         "always_notify": True})
+        row = st.get_job(job_id)
+        assert row["notified"] == 1, "尝试过推送就该置 notified=1"
+        assert "SMTP_HOST" in (row["notify_error"] or ""), row["notify_error"]
+
+    def test_success_leaves_no_error(self, store, monkeypatch):
+        api, st = store
+        job_id = self._mkjob(api, st)
+
+        class FakeNotify:
+            @staticmethod
+            def build_report(rows):
+                return "t", "md", ["x"]
+
+            @staticmethod
+            def parse_addrs(raw):
+                return [raw]
+
+            @staticmethod
+            def send_mail(*a, **kw):
+                return None
+
+        monkeypatch.setattr(api, "notify", FakeNotify)
+        monkeypatch.setenv("SMTP_HOST", "smtp.example.com")
+        w = object.__new__(api.Worker)
+        w.store = st
+        w._maybe_notify(job_id, [{"判定": "ok"}], {"mail_to": "a@x.com"})
+        row = st.get_job(job_id)
+        assert row["notified"] == 1 and not row["notify_error"]
+
+    def test_notify_error_appears_in_api(self, store):
+        """JobSummary 必须把 notify_error 带给前端，否则等于没记。"""
+        api, st = store
+        job_id = self._mkjob(api, st)
+        st.mark_notified(job_id, error="mail: 未配置 SMTP_HOST")
+        summary = api._to_summary(st.get_job(job_id), st)
+        assert summary.notify_error == "mail: 未配置 SMTP_HOST"
+
+    def test_old_db_without_column_is_migrated(self, tmp_path):
+        """老库（无 notify_error 列）升级后必须能直接跑。
+
+        CREATE TABLE IF NOT EXISTS 对已存在的表完全无操作，加列必须单独做，
+        否则 SELECT 会报 no such column——而这是升级时最常见的翻车点，
+        本地开发库一看就炸，生产库更是跑不起来。
+        """
+        import importlib
+        import sqlite3
+
+        db = tmp_path / "old.db"
+        # 手工建一个「旧版」jobs 表：没有 notify_error
+        conn = sqlite3.connect(db)
+        conn.executescript("""
+        CREATE TABLE jobs (
+            job_id TEXT PRIMARY KEY, state TEXT NOT NULL, total INTEGER NOT NULL,
+            finished INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL,
+            started_at TEXT, finished_at TEXT, error TEXT,
+            notified INTEGER NOT NULL DEFAULT 0, request TEXT NOT NULL,
+            csv_path TEXT);
+        """)
+        conn.commit()
+        conn.close()
+
+        import api
+        importlib.reload(api)
+        st = api.Store(str(db))
+        cols = {r[1] for r in sqlite3.connect(db).execute("PRAGMA table_info(jobs)")}
+        assert "notify_error" in cols
+        # 迁移后能正常写读
+        jid = st.create_job(["甲"], {"names": ["甲"]})
+        st.mark_notified(jid, error="boom")
+        assert st.get_job(jid)["notify_error"] == "boom"
+
+
+class TestCreditCodeLookup:
+    """按统一社会信用代码查询。
+
+    销售手上两个键都可能：企业全称，或者营业执照上那串 18 位代码。
+    原先 check_one 只把输入当名字去搜、再按**名称相等**判定，于是：
+
+      * 直接粘代码进来 → 信用中国对它返回空列表 → 判定 notfound
+        → 用户看到「未收录（疑似已注销/吊销）」，而这家公司其实正常存续；
+      * 即便搜索返回了带代码的候选，也会因为名称对不上而判 unknown。
+
+    两者都是「查不到」，但业务含义完全不同——一个会让销售误以为客户
+    出了问题。这里锁住代码查询路径与两条匹配依据。
+    """
+
+    @staticmethod
+    def _row(name="深圳市腾讯计算机系统有限公司",
+             code="91440300708461136T", et="1"):
+        return {"accurate_entity_name": name, "accurate_entity_code": code,
+                "accurate_entity_name_query": name, "entityType": et,
+                "uuid": "u-1"}
+
+    def test_is_credit_code(self):
+        import credit_check as cc
+        assert cc.is_credit_code("91440300708461136T")
+        assert cc.is_credit_code(" 91440300708461136t ")   # 归一后大写
+        # 18 位里含 I/O/S/V/Z 的按 GB 32100 不属于代码字符集
+        assert not cc.is_credit_code("91440300708461136I")
+        assert not cc.is_credit_code("深圳市腾讯计算机系统有限公司")
+        assert not cc.is_credit_code("")
+        assert not cc.is_credit_code("9144030070846113")     # 17 位
+
+    def test_matches_by_code_even_when_name_differs(self):
+        """按代码查：名称与输入对不上也应命中（输入本来就是代码）。"""
+        import credit_check as cc
+        rows = [{"accurate_entity_name": "某某无关公司",
+                 "accurate_entity_code": "91440300708461136T"}]
+        got = cc.pick_target(rows, "91440300708461136T")
+        assert got is not None and got["accurate_entity_name"] == "某某无关公司"
+
+    def test_matches_by_name(self):
+        import credit_check as cc
+        got = cc.pick_target([self._row()], "深圳市腾讯计算机系统有限公司")
+        assert got is not None and got["accurate_entity_code"] == "91440300708461136T"
+
+    def test_no_fuzzy_match(self):
+        """近似但不等的不许命中——假阳性比查不到更危险。"""
+        import credit_check as cc
+        rows = [self._row(name="深圳市腾讯计算机系统有限公司")]
+        assert cc.pick_target(rows, "腾讯计算机系统有限公司") is None
+        assert cc.pick_target(rows, "91440300708461130X") is None
+
+    def test_code_hit_follows_row_order(self):
+        """多行都能命中时按列表顺序取第一条——与原先 next() 语义一致。"""
+        import credit_check as cc
+        rows = [
+            {"accurate_entity_name": "甲公司", "accurate_entity_code": "91440300MA5AAAAA1X"},
+            {"accurate_entity_name": "乙公司", "accurate_entity_code": "91440300MA5BBBBB2Y"},
+        ]
+        got = cc.pick_target(rows, "91440300MA5BBBBB2Y")
+        assert got is not None and got["accurate_entity_name"] == "乙公司"
+
+    def test_ignores_non_dict_rows(self):
+        """搜索响应里混进非 dict（null/字符串）不能炸。"""
+        import credit_check as cc
+        got = cc.pick_target([None, "oops", self._row()], "91440300708461136T")
+        assert got is not None and got["accurate_entity_name"].startswith("深圳市腾讯")
+
+    def test_code_normalization_ignores_case_and_space(self):
+        import credit_check as cc
+        assert cc.norm_code(" 91440300708461136t ") == "91440300708461136T"
+        assert cc.is_credit_code("91440300708461136t")
+
+
+class TestScheduleResultSync:
+    """调度触发的作业，终态必须回写到调度行。
+
+    这是「静默失败」的第二现场：调度行只写过 ``last_state="queued"``
+    就再没人更新，用户看到的是「设了每天 09:30，状态一直没变」——
+    与「填了邮箱、跑完了、什么也没收到」同属「配了却无从确认」。
+    """
+
+    def _make(self, client, names=("甲有限公司",)):
+        r = client.post("/api/schedules", json={
+            "name": "回写用例", "freq": "daily", "at_time": "09:30",
+            "names": list(names),
+        })
+        assert r.status_code == 201, r.text
+        return r.json()["schedule_id"]
+
+    def test_done_state_and_notify_error_reach_schedule_row(self, client):
+        import api
+        sid = self._make(client)
+        r = client.post(f"/api/schedules/{sid}/run")
+        assert r.status_code == 202, r.text
+        job_id = r.json()["job_id"]
+
+        store = client.app.state.store
+        row = store.get_schedule(sid)
+        assert row["last_state"] == "queued" and row["last_job_id"] == job_id
+
+        # 模拟 worker 收尾：done + 推送失败原因
+        store.set_state(job_id, "done")
+        store.mark_notified(job_id, "mail: 连接超时")
+        api._sync_schedule(store, job_id, "done")
+
+        row = store.get_schedule(sid)
+        assert row["last_state"] == "done"
+        assert row["last_error"] == "mail: 连接超时", (
+            "推送失败原因必须落到调度行，否则用户只看到「已完成」")
+
+    def test_failed_job_writes_error(self, client):
+        import api
+        sid = self._make(client)
+        job_id = client.post(f"/api/schedules/{sid}/run").json()["job_id"]
+
+        store = client.app.state.store
+        msg = "浏览器启动失败：RuntimeError: boom"
+        store.set_state(job_id, "failed", error=msg)
+        api._sync_schedule(store, job_id, "failed", msg)
+
+        row = store.get_schedule(sid)
+        assert row["last_state"] == "failed"
+        assert "boom" in row["last_error"]
+
+    def test_manual_job_does_not_touch_schedules(self, client):
+        """普通作业的 request 里没有 schedule_id，回写应当是无操作。"""
+        import api
+        sid = self._make(client, names=("乙有限公司",))
+        before = client.app.state.store.get_schedule(sid)
+
+        job = client.post("/api/jobs", json={"names": ["丙有限公司"]}).json()
+        store = client.app.state.store
+        store.set_state(job["job_id"], "done")
+        api._sync_schedule(store, job["job_id"], "done")  # 不该抛，也不该改
+
+        after = store.get_schedule(sid)
+        assert after["last_state"] == before["last_state"]
+        assert after["last_job_id"] == before["last_job_id"]
+
+    def test_run_now_does_not_shift_next_run(self, client):
+        """「立刻跑一次」刻意不顺延：否则周五点一下，周一的定时就没了。"""
+        sid = self._make(client)
+        first = client.app.state.store.get_schedule(sid)["next_run_at"]
+        client.post(f"/api/schedules/{sid}/run")
+        assert client.app.state.store.get_schedule(sid)["next_run_at"] == first

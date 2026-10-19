@@ -27,6 +27,7 @@ export const routes = [
   { path: '/', redirect: '/overview' },
   { path: '/overview', name: 'overview', component: () => import('@/views/OverviewView.vue'), meta: { title: '总览' } },
   { path: '/submit', name: 'submit', component: () => import('@/views/SubmitView.vue'), meta: { title: '提交巡检' } },
+  { path: '/schedules', name: 'schedules', component: () => import('@/views/SchedulesView.vue'), meta: { title: '定时巡检' } },
   { path: '/jobs', name: 'jobs', component: () => import('@/views/JobsView.vue'), meta: { title: '作业列表' } },
   { path: '/jobs/:jobId', name: 'job-detail', component: () => import('@/views/JobDetailView.vue'), meta: { title: '作业详情' }, props: true },
   // 兜底：输错路径时给一条明确提示，而不是白屏

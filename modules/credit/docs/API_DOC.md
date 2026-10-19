@@ -247,14 +247,21 @@ log_path(name: str, log_dir: Path | None = None) -> Path   # logkit.py:88
 | `GET` | `/api/jobs/{job_id}/results` | 明细，可按 `verdict` 过滤 | 200 / 404 |
 | `GET` | `/api/jobs/{job_id}/csv` | 下载 CSV（UTF-8 BOM） | 200 / 404 / **409**（未完成） |
 | `DELETE` | `/api/jobs/{job_id}` | 取消**排队中**的作业 | 200 / 404 / 409（非 queued） |
+| `GET` | `/api/schedules` | 定时巡检列表 | 200 |
+| `POST` | `/api/schedules` | 新建定时巡检 | **201** / 422（字段校验失败） |
+| `PUT` | `/api/schedules/{schedule_id}` | 修改定时巡检 | 200 / 404 |
+| `POST` | `/api/schedules/{schedule_id}/toggle?enabled=` | 启用/停用 | 200 / 404 |
+| `POST` | `/api/schedules/{schedule_id}/run` | 立刻跑一次（不顺延下次时间） | **202** / 404 / 409（名单为空） |
+| `DELETE` | `/api/schedules/{schedule_id}` | 删除定时巡检 | 200 / 404 |
+| `GET` | `/api/schedules/preview` | 预览下次触发时间（不落库） | 200 / 422 |
 
-**`POST /api/jobs` 入参**（`api.py:57-88`）：
+**`POST /api/jobs` 入参**（`api.py:242` `JobRequest`）：
 
 | 字段 | 类型 | 默认 | 说明 |
 | --- | --- | --- | --- |
-| `names` | `list[str]` | 必填 | 企业全称，1–200 条；清洗空行/`#` 注释并去重，清洗后为空 → 422 |
-| `webhook` | `str \| None` | `None` | 企业微信/钉钉/飞书 webhook，留空则不发 |
-| `mail_to` | `str \| None` | `None` | 收件人，逗号分隔；留空则不发邮件 |
+| `names` | `list[str]` | 必填 | 企业全称**或 18 位统一社会信用代码**，1–200 条；清洗空行/`#` 注释并去重，清洗后为空 → 422 |
+| `webhook` | `str \| None` | `None` | 企业微信/钉钉/飞书 webhook，留空则不发；**必须含主机名**（裸 `https://` 视为非法，422 而不是跑完才发现推不出去） |
+| `mail_to` | `str \| None` | `None` | 收件人，分隔符支持 `,` `;` 及中文 `，` `；` 与换行；每条都校验 `x@y.z`，任一不合法 → 422；留空则不发邮件 |
 | `always_notify` | `bool` | `False` | 无异常也推送（周报用） |
 | `min_delay` / `max_delay` | `float` | `3.5` / `6.5` | 两家之间随机间隔区间；`max < min` → 422 |
 
@@ -267,7 +274,47 @@ log_path(name: str, log_dir: Path | None = None) -> Path   # logkit.py:88
 且目标站有瑞数风控，并发等于自伤。`--workers 1` 同理：多进程各自起 worker
 会让串行保证失效。
 
-### 4A.2 前端静态托管（`api.py:478-535`）
+### 4A.1b 定时巡检（`schedule.py` + `/api/schedules`）
+
+销售部原先每周手动把这批公司名复制进国家企业信用信息公示系统，所以「能不能设成每天/每周/每月自动跑」
+是使用方提的第一需求。调度逻辑在 `schedule.py`（纯函数 + 一个 30 秒 tick 的线程），HTTP 只是它的读写口。
+
+**为什么不接受 cron 表达式**：目标用户是销售主管，`0 30 9 * * 1` 对他们是纯负担；
+本项目也只需要三种节奏。故入参是 `freq ∈ {daily, weekly, monthly}` + `at_time`（`HH:MM`）。
+
+| 字段 | 类型 | 默认 | 说明 |
+| --- | --- | --- | --- |
+| `name` | `str` | 必填 | 调度名称，1–100 字 |
+| `enabled` | `bool` | `True` | 是否启用 |
+| `freq` | `daily` / `weekly` / `monthly` | 必填 | 频率 |
+| `at_time` | `str` | 必填 | `HH:MM`（24 小时制，`^([01]\d|2[0-3]):[0-5]\d$`），`9:00` 这种 → 422 |
+| `weekday` | `int` | `0` | `weekly` 用；**0=周一 … 6=周日** |
+| `day` | `int` | `1` | `monthly` 用；**1–28** |
+| `names` | `list[str]` | 必填 | 同 `POST /api/jobs`，1–200 条 |
+| `webhook` / `mail_to` / `always_notify` / `min_delay` / `max_delay` | — | — | 同 `POST /api/jobs`，触发时原样透传 |
+
+**`day` 上限为什么是 28 而不是 31**：「每月 31 号」在 2/4/6/9/11 月不存在，
+顺延到月末还是跳过都有坑；限 28 后每个月都有这一天，行为零歧义。真要月末跑用 `weekly` 或 `daily`。
+
+**几处刻意的取舍**（都属于「不说清楚就会被当成 bug」的）：
+
+| 行为 | 选择 | 理由 |
+| --- | --- | --- |
+| 手动「立刻执行」 | **不顺延** `next_run_at` | 周五点一下看看，不该把周一的定时冲掉 |
+| 停用后重新启用 | 按**当前时间**重算下次 | 否则停两周再一开，会立刻补跑一个早已过期的时刻 |
+| 修改频率/时刻 | **必须重算** `next_run_at` | 不重算就还按旧节奏跑，改了等于没改 |
+| `preview` | 只算不落库 | 用户还在填表，写库会产生半成品配置；也让他保存前就能看见「居然排到下个月」 |
+| 服务停机错过触发 | 只**补跑一次** | 停机三天回来补三天，等于把上游打一遍 |
+| tick 顺序 | 先推进 `next_run_at` 再提交作业 | 否则提交完成后崩溃重入会把同一时刻触发两次 |
+
+调度线程与 worker 一起挂在 lifespan 上：进入顺序 wipo → credit，退出反序（先停调度再停 worker），
+否则收尾时调度还在往队列里塞作业，那些作业会被静默丢弃。`--workers 1` 同样是硬约束：
+多进程各自起一个调度线程，同一条调度会被触发多次。
+
+**健康检查**：`GET /api/health` 的 `queued` 会把调度触发的作业一起算进去；调度本身的状态看 `list` 里的
+`last_job_id` / `last_state` / `last_error`——推送失败会落到 `last_error`，不再只写日志。
+
+### 4A.2 前端静态托管（`api.py:1142`）
 
 `_mount_frontend(app)` 在**文件末尾、所有 `@app.get` 之后**调用：
 

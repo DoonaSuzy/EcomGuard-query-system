@@ -41,38 +41,55 @@ watch([namesText, mailTo, webhook, minDelay, maxDelay], () => {
   touched.value = true
 })
 
+/** 统一社会信用代码：18 位，数字 + 大写字母（GB 32100 的字符集，无 I/O/S/V/Z）。
+ *  销售最常拿到的就是营业执照上这串，名单里混着代码必须能提交。 */
+const CREDIT_CODE_RE = /^[0-9A-HJ-NPQRTUWXY]{18}$/
+
 /** 把粘贴进来的整块文本切成名称列表 */
 const parsed = computed(() => {
   const out: string[] = []
   const seen = new Set<string>()
   let dupCount = 0
   let commentCount = 0
+  let codeCount = 0
   for (const raw of namesText.value.split(/[\r\n,;，；]+/)) {
     const n = raw.trim()
     if (!n) continue
     if (n.startsWith('#')) { commentCount++; continue }
     if (seen.has(n)) { dupCount++; continue }
     seen.add(n)
+    if (CREDIT_CODE_RE.test(n.toUpperCase())) codeCount++
     out.push(n)
   }
-  return { out, dupCount, commentCount }
+  return { out, dupCount, commentCount, codeCount }
 })
 
 const valid = computed(() => parsed.value.out.length > 0 && parsed.value.out.length <= MAX_NAMES)
 const overLimit = computed(() => parsed.value.out.length > MAX_NAMES)
 
-/** 与后端 CheckRequest 的校验规则对齐，前端先拦一道 */
+/** 收件人拆分口径与后端 notify.parse_addrs 完全一致：中英文逗号/分号/空白都算分隔符。
+ *  原先前端只认英文逗号，而后端正则的字符类里带着中文逗号——两边不一致时
+ *  「填了两个只发一个」且没有任何报错。 */
+const MAIL_SPLIT_RE = /[,;，；\s]+/
+const ADDR_RE = /^[^@\s,;，；]+@[^@\s,;，；]+\.[^@\s,;，；]+$/
+const parsedMails = computed(() =>
+  mailTo.value.split(MAIL_SPLIT_RE).map((s) => s.trim()).filter(Boolean))
+
+/** 与后端 _norm_webhook 对齐：必须是带主机的 http(s)。光秃秃的 `https://`
+ *  原先前后端都放行，一路跑到推送才抛 MissingSchema，只在日志里可见。 */
+const WEBHOOK_RE = /^https?:\/\/[^\s/]+\.[^\s/]+(?:[/?#]\S*)?$/
+
+/** 与后端 CheckRequest / ScheduleIn 的校验规则对齐，前端先拦一道 */
 const formProblem = computed(() => {
-  if (!parsed.value.out.length) return '请至少填写一个企业全称'
+  if (!parsed.value.out.length) return '请至少填写一个企业全称或统一社会信用代码'
   if (overLimit.value) return `一次最多提交 ${MAX_NAMES} 家，当前 ${parsed.value.out.length} 家`
   if (minDelay.value < 0 || maxDelay.value < 0) return '间隔秒数不能为负'
   if (maxDelay.value < minDelay.value) return '最大间隔不能小于最小间隔'
   if (maxDelay.value > 120) return '最大间隔上限 120 秒'
-  if (mailTo.value.trim() && !/^[^@\s,，]+@[^@\s,，]+\.[^@\s,，]+([,，][^@\s,，]+@[^@\s,，]+\.[^@\s,，]+)*$/.test(mailTo.value.trim())) {
-    return '收件人格式不正确，多个邮箱请用逗号分隔'
-  }
-  if (webhook.value.trim() && !/^https?:\/\//.test(webhook.value.trim())) {
-    return 'Webhook 需要以 http:// 或 https:// 开头'
+  const bad = parsedMails.value.filter((a) => !ADDR_RE.test(a))
+  if (bad.length) return `收件人格式不正确：${bad.join('、')}`
+  if (webhook.value.trim() && !WEBHOOK_RE.test(webhook.value.trim())) {
+    return 'Webhook 需形如 https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=xxx'
   }
   return ''
 })
@@ -155,13 +172,15 @@ function clearNames() {
 
       <div class="meta-line">
         <span v-if="parsed.dupCount" class="tag warn">已去除 {{ parsed.dupCount }} 个重复名称</span>
+        <span v-if="parsed.codeCount" class="tag muted">含 {{ parsed.codeCount }} 个统一社会信用代码</span>
         <span v-if="parsed.commentCount" class="tag muted">忽略 {{ parsed.commentCount }} 行注释（# 开头）</span>
         <span class="grow" />
         <button class="btn sm" @click="fillDemo">填入示例</button>
         <button class="btn sm" :disabled="!namesText" @click="clearNames">清空</button>
       </div>
 
-      <p class="hint">支持换行、逗号、分号分隔；自动按首尾空白裁剪并去重。<code>#</code> 开头的行视为注释，不会提交。</p>
+      <p class="hint">支持换行、逗号、分号分隔；自动按首尾空白裁剪并去重。<code>#</code> 开头的行视为注释，不会提交。
+        <strong>企业全称与 18 位统一社会信用代码都可以</strong>——营业执照上那串直接粘进来即可。</p>
     </div>
 
     <div class="card">
@@ -169,13 +188,15 @@ function clearNames() {
 
       <div class="field">
         <label for="mail">告警邮件收件人</label>
-        <input id="mail" v-model="mailTo" type="text" placeholder="留空则不发送邮件，多个用逗号分隔" />
-        <div class="hint">作业结束且有异常时才发；全正常会用一条「无异常」简报（可关闭）。</div>
+        <input id="mail" v-model="mailTo" type="text" placeholder="留空则不发送邮件，多个用逗号或分号分隔" />
+        <div class="hint">作业结束且有异常时才发；全正常会用一条「无异常」简报（可关闭）。
+          中英文逗号、分号都能分隔，会统一转成英文逗号保存。</div>
       </div>
 
       <div class="field">
         <label for="hook">Webhook（可选）</label>
-        <input id="hook" v-model="webhook" type="text" placeholder="企业微信 / 钉钉 / 飞书机器人地址" />
+        <input id="hook" v-model="webhook" type="text" placeholder="https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=..." />
+        <div class="hint">需填写完整地址（含主机与 key），只写 <code>https://</code> 会被拒绝。</div>
       </div>
 
       <div class="field">

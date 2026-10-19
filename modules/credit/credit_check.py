@@ -96,6 +96,50 @@ def norm_name(s: str) -> str:
     return re.sub(r"\s+", "", s).strip()
 
 
+#: 统一社会信用代码：18 位，数字 + 大写字母（不含 I/O/S/V/Z 之外的歧义字符）。
+#: 实际校验位算法（GB 32100-2015）这里不做——信用中国返回的代码是权威值，
+#: 我们只判断「用户输入的是不是一个代码」，不需要自己算校验位。
+_CREDIT_CODE_RE = re.compile(r"^[0-9A-HJ-NPQRTUWXY]{18}$")
+
+
+def is_credit_code(s: str) -> bool:
+    """输入是否像统一社会信用代码。
+
+    销售手上两个键都可能：公司名，或者营业执照上的代码。原先 ``check_one``
+    只把输入当名字去搜、再按名字相等判定，于是直接粘代码进来必然 `unknown`
+    （信用中国的搜索接口对纯代码返回的是空列表或无关结果），
+    用户看到的是「查不到这家公司」——而这家公司其实存在。
+    """
+    return bool(_CREDIT_CODE_RE.match(norm_name(s).upper()))
+
+
+def norm_code(s: str) -> str:
+    return norm_name(s or "").upper()
+
+
+def pick_target(rows: list, query: str) -> dict | None:
+    """在搜索结果里挑出与查询对应的那一条，找不到返回 None。
+
+    承认输入既可能是企业全称、也可能是统一社会信用代码，两个键各自独立比对：
+    名称对得上 **或** 代码对得上，都算命中。只比名称是原先的缺陷——
+    直接粘代码进来必然判 unknown（搜出来的是别家或空列表），
+    而销售最常拿到的恰恰是营业执照上那串代码。
+
+    严格相等、不做模糊兜底：把别家公司的状态当成输入公司的状态，
+    对销售是假阳性，比查不到更危险。
+    """
+    want_code = norm_code(query) if is_credit_code(query) else ""
+    want_name = "" if want_code else norm_name(query)
+    for r in rows:
+        if not isinstance(r, dict):
+            continue
+        if want_code and norm_code(r.get("accurate_entity_code", "")) == want_code:
+            return r
+        if want_name and norm_name(r.get("accurate_entity_name")) == want_name:
+            return r
+    return None
+
+
 def classify(status: str) -> str:
     if not status:
         return "unknown"
@@ -310,21 +354,27 @@ class CreditChecker:
                 out["记录数"] = data.get("total") or len(lst)
                 if not lst:
                     out["判定"] = "notfound"
-                    out["备注"] = "信用中国未收录（该索引仅收在册主体，疑似已注销/吊销）"
+                    if is_credit_code(name):
+                        out["备注"] = ("按统一社会信用代码未检索到主体（该索引仅收在册主体，"
+                                       "疑似已注销/吊销；也可能代码有误，可用企业全称再查一次）")
+                    else:
+                        out["备注"] = "信用中国未收录（该索引仅收在册主体，疑似已注销/吊销）"
                     return out
 
-                target = next(
-                    (r for r in lst
-                     if norm_name(r.get("accurate_entity_name")) == norm_name(name)), None)
+                # 承认输入既可能是企业全称、也可能是统一社会信用代码。
+                # 匹配口径见 pick_target 的注释。
+                target = pick_target(lst, name)
                 if target is None:
                     # 不做模糊兜底：把别家公司的状态当成输入公司的状态，对销售是假阳性，
                     # 比查不到更危险。列出候选，交给人工确认名称。
                     cands = "、".join(
-                        str(r.get("accurate_entity_name")) for r in lst[:3])
+                        f"{r.get('accurate_entity_name')}"
+                        f"（{r.get('accurate_entity_code') or '无代码'}）"
+                        for r in lst[:3])
                     out["判定"] = "unknown"
                     out["记录数"] = len(lst)
-                    out["备注"] = (f"无精确同名主体，未判定状态。"
-                                   f"候选：{cands}（请核对全称后重查）")
+                    out["备注"] = (f"无精确同名/同码主体，未判定状态。"
+                                   f"候选：{cands}（请核对全称或信用代码后重查）")
                     return out
 
                 out["匹配名称"] = target.get("accurate_entity_name", "")

@@ -32,6 +32,7 @@ WIPO 先进、credit 后进，退出时 credit 先出、WIPO 后出。
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 
 import api as credit_api
@@ -44,33 +45,49 @@ router = credit_api.router
 
 log = logging.getLogger("credit_glue")
 
-#: enter 时记下 worker，exit 时用它来 stop（exit 拿不到 application 参数）。
+#: enter 时记下 worker / scheduler，exit 时用它们收尾（exit 拿不到 application 参数）。
 _worker: credit_api.Worker | None = None
+_scheduler: object | None = None
 
 
 async def credit_lifespan_enter(application: FastAPI) -> None:
-    """建 Store、启动 Worker，并挂到主 app 的 state 上。
+    """建 Store、启动 Worker 与调度线程，并挂到主 app 的 state 上。
 
     与 ``credit_api.lifespan`` 的启动段等价，只是作用对象换成了主 app。
+    **两处 lifespan 必须保持同步**：credit 独立运行时走的也是同一套
+    「建 Store → 起 Worker → 补算调度 → 起调度线程」顺序，
+    漏掉调度线程会让「独立跑 api:app 时定时任务不生效」这种差异
+    在聚合入口里看不出来，而恰好是独立部署时最需要它的场景。
     """
-    global _worker
+    global _worker, _scheduler
+    import schedule as sched
+
     store = credit_api.Store(credit_api.DB_TARGET)
     worker = credit_api.Worker(store)
     worker.start()
     application.state.store = store
     application.state.worker = worker
+    fixed = sched.ensure_next_run(store)
+    scheduler = sched.Scheduler(store, worker)
+    scheduler.start()
+    application.state.scheduler = scheduler
     _worker = worker
-    log.info("营业执照模块已挂载：db=%s(%s) out=%s",
-             credit_api.DB_TARGET, store.backend, credit_api.OUT_DIR)
+    _scheduler = scheduler
+    log.info("营业执照模块已挂载：db=%s(%s) out=%s 调度补算 %d 条",
+             credit_api.DB_TARGET, store.backend, credit_api.OUT_DIR, fixed)
 
 
 async def credit_lifespan_exit() -> None:
-    """等 worker 线程退出。
+    """先停调度线程，再等 worker 退出。
 
-    ``worker.stop()`` 是阻塞的（内部 ``cv.wait``），必须丢到线程池，
-    否则会卡住事件循环。与 credit 原 lifespan 的写法一致。
+    顺序有讲究：**先停调度**，否则正在收尾时调度又塞一个新作业进队列，
+    worker 会因为「停止标志已置位」直接丢弃它，那条作业就永远停在 queued。
     """
-    global _worker
+    global _worker, _scheduler
+    if _scheduler is not None:
+        with contextlib.suppress(Exception):
+            _scheduler.stop()
+        _scheduler = None
     if _worker is None:
         return
     log.info("营业执照模块关闭，等待 worker 退出")

@@ -91,6 +91,105 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/schedules": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 定时巡检列表 */
+        get: operations["list_schedules_api_schedules_get"];
+        put?: never;
+        /** 新建定时巡检 */
+        post: operations["create_schedule_api_schedules_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/schedules/{schedule_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** 修改定时巡检 */
+        put: operations["update_schedule_api_schedules__schedule_id__put"];
+        post?: never;
+        /** 删除定时巡检 */
+        delete: operations["delete_schedule_api_schedules__schedule_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/schedules/{schedule_id}/toggle": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 启用/停用定时巡检 */
+        post: operations["toggle_schedule_api_schedules__schedule_id__toggle_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/schedules/{schedule_id}/run": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 立刻跑一次（不影响下次时间）
+         * @description 手动触发一条调度。
+         *
+         *     刻意**不动** ``next_run_at``：这是「临时想现在看一下」的需求，
+         *     不该顺延正常节奏——否则周五点了下「立刻执行」，周一的定时就不跑了。
+         */
+        post: operations["run_schedule_now_api_schedules__schedule_id__run_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/schedules/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 预览改配置后的下次触发时间（不落库）
+         * @description 编辑弹窗里「下次：周三 09:30」这样的实时预览。
+         *
+         *     **刻意不落库**：用户还在填表，写库会产生一堆半成品配置；
+         *     而且没有预览时，用户改完保存才能看到「居然排到下个月了」。
+         */
+        get: operations["preview_schedule_api_schedules_preview_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -220,10 +319,52 @@ export interface components {
              */
             notified?: boolean;
             /**
+             * Notify Error
+             * @description 推送失败原因；null 表示推送成功或尚未尝试
+             */
+            notify_error?: string | null;
+            /**
              * Results
              * @default []
              */
             results?: components["schemas"]["ResultItem"][];
+            /** @description 提交时的参数回显；老作业可能为 null */
+            request?: components["schemas"]["JobRequest"] | null;
+        };
+        /**
+         * JobRequest
+         * @description 作业提交时的原始参数回显。
+         *
+         *     用户提完一轮之后最常见的疑问是「我到底填的哪个邮箱 / 有没有配 webhook」。
+         *     原先这些只在 ``jobs.request``（JSON 列）里躺着，``_to_summary`` 直接丢弃，
+         *     详情页无从显示——于是丢了收件人只能重填一遍。
+         *
+         *     ``notify_error`` 与这里配合才能定位问题：先看填了什么，再看推送为什么失败。
+         */
+        JobRequest: {
+            /**
+             * Names
+             * @default []
+             */
+            names?: string[];
+            /** Webhook */
+            webhook?: string | null;
+            /** Mail To */
+            mail_to?: string | null;
+            /**
+             * Always Notify
+             * @default false
+             */
+            always_notify?: boolean;
+            /** Min Delay */
+            min_delay?: number | null;
+            /** Max Delay */
+            max_delay?: number | null;
+            /**
+             * Schedule Id
+             * @description 由哪条定时调度创建；手动提交为 null
+             */
+            schedule_id?: string | null;
         };
         /** JobSummary */
         JobSummary: {
@@ -271,6 +412,11 @@ export interface components {
              * @default false
              */
             notified?: boolean;
+            /**
+             * Notify Error
+             * @description 推送失败原因；null 表示推送成功或尚未尝试
+             */
+            notify_error?: string | null;
         };
         /** ResultItem */
         ResultItem: {
@@ -323,6 +469,197 @@ export interface components {
              */
             note?: string;
         };
+        /** ScheduleDeleteResponse */
+        ScheduleDeleteResponse: {
+            /** Schedule Id */
+            schedule_id: string;
+            /**
+             * Deleted
+             * @default true
+             * @constant
+             */
+            deleted?: true;
+        };
+        /**
+         * ScheduleIn
+         * @description 新建/修改一条定时巡检。
+         *
+         *     参数取舍：
+         *       * 不叫 cron：目标用户是销售主管，cron 表达式对他们是纯粹的负担，
+         *         而且本项目只需要「每日/每周/每月」这三种节奏；
+         *       * ``day`` 上限 28 而非 31——「每月 31 号」在 2/4/6/9/11 月不存在，
+         *         要额外定义「顺延到月末」还是「跳过」，两种都有坑。限 28 后每个月
+         *         都有这一天，行为零歧义；真要月末跑用 weekly 或 daily 即可。
+         */
+        ScheduleIn: {
+            /**
+             * Name
+             * @description 调度名称，如「华东区每日巡检」
+             */
+            name: string;
+            /**
+             * Enabled
+             * @description 是否启用
+             * @default true
+             */
+            enabled?: boolean;
+            /**
+             * Freq
+             * @description 频率
+             * @enum {string}
+             */
+            freq: "daily" | "weekly" | "monthly";
+            /**
+             * At Time
+             * @description 触发时刻 HH:MM（24 小时制）
+             */
+            at_time: string;
+            /**
+             * Weekday
+             * @description weekly 用：0=周一 … 6=周日
+             * @default 0
+             */
+            weekday?: number;
+            /**
+             * Day
+             * @description monthly 用：每月几号（1-28）
+             * @default 1
+             */
+            day?: number;
+            /**
+             * Names
+             * @description 企业全称列表
+             */
+            names: string[];
+            /**
+             * Webhook
+             * @description webhook，留空则不发
+             */
+            webhook?: string | null;
+            /**
+             * Mail To
+             * @description 收件人，逗号分隔
+             */
+            mail_to?: string | null;
+            /**
+             * Always Notify
+             * @description 无异常也推送
+             * @default false
+             */
+            always_notify?: boolean;
+            /**
+             * Min Delay
+             * @default 3.5
+             */
+            min_delay?: number;
+            /**
+             * Max Delay
+             * @default 6.5
+             */
+            max_delay?: number;
+        };
+        /**
+         * ScheduleOut
+         * @description 一条调度的对外形态。
+         *
+         *     ``next_run_at`` 与 ``human`` 同时给：前者给程序/排序用，后者直接显示。
+         *     前端不自己拼「每周一 09:30」这类文案——拼错了没人会发现，
+         *     而后端这一份是与实际计算共用同一组常量的。
+         */
+        ScheduleOut: {
+            /** Schedule Id */
+            schedule_id: string;
+            /** Name */
+            name: string;
+            /** Enabled */
+            enabled: boolean;
+            /**
+             * Freq
+             * @enum {string}
+             */
+            freq: "daily" | "weekly" | "monthly";
+            /** At Time */
+            at_time: string;
+            /**
+             * Weekday
+             * @default 0
+             */
+            weekday?: number;
+            /**
+             * Day
+             * @default 1
+             */
+            day?: number;
+            /**
+             * Names
+             * @default []
+             */
+            names?: string[];
+            /** Webhook */
+            webhook?: string | null;
+            /** Mail To */
+            mail_to?: string | null;
+            /**
+             * Always Notify
+             * @default false
+             */
+            always_notify?: boolean;
+            /**
+             * Min Delay
+             * @default 3.5
+             */
+            min_delay?: number;
+            /**
+             * Max Delay
+             * @default 6.5
+             */
+            max_delay?: number;
+            /** Next Run At */
+            next_run_at?: string | null;
+            /** Last Run At */
+            last_run_at?: string | null;
+            /** Last Job Id */
+            last_job_id?: string | null;
+            /** Last State */
+            last_state?: string | null;
+            /** Last Error */
+            last_error?: string | null;
+            /**
+             * Created At
+             * @default
+             */
+            created_at?: string;
+            /**
+             * Updated At
+             * @default
+             */
+            updated_at?: string;
+            /**
+             * Human
+             * @description 节奏的中文描述，直接展示用
+             * @default
+             */
+            human?: string;
+            /**
+             * Count
+             * @description 名单企业数
+             * @default 0
+             */
+            count?: number;
+        };
+        /**
+         * SchedulePreview
+         * @description 编辑弹窗的实时预览。
+         *
+         *     两个字段都要给：``next_run_at`` 让人看到具体日期（能立刻发现「怎么排到下个月
+         *     去了」这种明显错配），``human`` 用一句话说清节奏（「每周三 09:30」）。
+         */
+        SchedulePreview: {
+            /** Next Run At */
+            next_run_at: string;
+            /** Human */
+            human: string;
+        };
         /** ValidationError */
         ValidationError: {
             /** Location */
@@ -331,6 +668,10 @@ export interface components {
             msg: string;
             /** Error Type */
             type: string;
+            /** Input */
+            input?: unknown;
+            /** Context */
+            ctx?: Record<string, never>;
         };
     };
     responses: never;
@@ -554,6 +895,225 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_schedules_api_schedules_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScheduleOut"][];
+                };
+            };
+        };
+    };
+    create_schedule_api_schedules_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ScheduleIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScheduleOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_schedule_api_schedules__schedule_id__put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                schedule_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ScheduleIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScheduleOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_schedule_api_schedules__schedule_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                schedule_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScheduleDeleteResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    toggle_schedule_api_schedules__schedule_id__toggle_post: {
+        parameters: {
+            query: {
+                /** @description 目标状态 */
+                enabled: boolean;
+            };
+            header?: never;
+            path: {
+                schedule_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScheduleOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    run_schedule_now_api_schedules__schedule_id__run_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                schedule_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["JobSummary"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    preview_schedule_api_schedules_preview_get: {
+        parameters: {
+            query: {
+                freq: "daily" | "weekly" | "monthly";
+                /** @description HH:MM */
+                at_time: string;
+                weekday?: number;
+                day?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SchedulePreview"];
+                };
             };
             /** @description Validation Error */
             422: {

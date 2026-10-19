@@ -8,6 +8,9 @@
   "paths": {
     "/api/health": {
       "get": {
+        "tags": [
+          "system"
+        ],
         "summary": "健康检查",
         "operationId": "health_api_health_get",
         "responses": {
@@ -26,6 +29,9 @@
     },
     "/api/jobs": {
       "post": {
+        "tags": [
+          "jobs"
+        ],
         "summary": "提交巡检作业",
         "operationId": "create_job_api_jobs_post",
         "requestBody": {
@@ -62,6 +68,9 @@
         }
       },
       "get": {
+        "tags": [
+          "jobs"
+        ],
         "summary": "作业列表",
         "operationId": "list_jobs_api_jobs_get",
         "parameters": [
@@ -108,6 +117,9 @@
     },
     "/api/jobs/{job_id}": {
       "get": {
+        "tags": [
+          "jobs"
+        ],
         "summary": "作业状态",
         "operationId": "get_job_api_jobs__job_id__get",
         "parameters": [
@@ -145,6 +157,9 @@
         }
       },
       "delete": {
+        "tags": [
+          "jobs"
+        ],
         "summary": "取消排队中的作业",
         "operationId": "cancel_job_api_jobs__job_id__delete",
         "parameters": [
@@ -184,6 +199,9 @@
     },
     "/api/jobs/{job_id}/results": {
       "get": {
+        "tags": [
+          "jobs"
+        ],
         "summary": "结果明细（可按判定过滤）",
         "operationId": "get_results_api_jobs__job_id__results_get",
         "parameters": [
@@ -251,6 +269,9 @@
     },
     "/api/jobs/{job_id}/csv": {
       "get": {
+        "tags": [
+          "jobs"
+        ],
         "summary": "下载 CSV",
         "operationId": "download_csv_api_jobs__job_id__csv_get",
         "parameters": [
@@ -281,6 +302,341 @@
           },
           "409": {
             "description": "作业未完成，CSV 尚未生成"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/schedules": {
+      "get": {
+        "tags": [
+          "schedules"
+        ],
+        "summary": "定时巡检列表",
+        "operationId": "list_schedules_api_schedules_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ScheduleOut"
+                  },
+                  "type": "array",
+                  "title": "Response List Schedules Api Schedules Get"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "schedules"
+        ],
+        "summary": "新建定时巡检",
+        "operationId": "create_schedule_api_schedules_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ScheduleIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScheduleOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/schedules/{schedule_id}": {
+      "put": {
+        "tags": [
+          "schedules"
+        ],
+        "summary": "修改定时巡检",
+        "operationId": "update_schedule_api_schedules__schedule_id__put",
+        "parameters": [
+          {
+            "name": "schedule_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Schedule Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ScheduleIn"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScheduleOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "schedules"
+        ],
+        "summary": "删除定时巡检",
+        "operationId": "delete_schedule_api_schedules__schedule_id__delete",
+        "parameters": [
+          {
+            "name": "schedule_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Schedule Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScheduleDeleteResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/schedules/{schedule_id}/toggle": {
+      "post": {
+        "tags": [
+          "schedules"
+        ],
+        "summary": "启用/停用定时巡检",
+        "operationId": "toggle_schedule_api_schedules__schedule_id__toggle_post",
+        "parameters": [
+          {
+            "name": "schedule_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Schedule Id"
+            }
+          },
+          {
+            "name": "enabled",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "boolean",
+              "description": "目标状态",
+              "title": "Enabled"
+            },
+            "description": "目标状态"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScheduleOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/schedules/{schedule_id}/run": {
+      "post": {
+        "tags": [
+          "schedules"
+        ],
+        "summary": "立刻跑一次（不影响下次时间）",
+        "description": "手动触发一条调度。\n\n刻意**不动** ``next_run_at``：这是「临时想现在看一下」的需求，\n不该顺延正常节奏——否则周五点了下「立刻执行」，周一的定时就不跑了。",
+        "operationId": "run_schedule_now_api_schedules__schedule_id__run_post",
+        "parameters": [
+          {
+            "name": "schedule_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Schedule Id"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobSummary"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/schedules/preview": {
+      "get": {
+        "tags": [
+          "schedules"
+        ],
+        "summary": "预览改配置后的下次触发时间（不落库）",
+        "description": "编辑弹窗里「下次：周三 09:30」这样的实时预览。\n\n**刻意不落库**：用户还在填表，写库会产生一堆半成品配置；\n而且没有预览时，用户改完保存才能看到「居然排到下个月了」。",
+        "operationId": "preview_schedule_api_schedules_preview_get",
+        "parameters": [
+          {
+            "name": "freq",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "enum": [
+                "daily",
+                "weekly",
+                "monthly"
+              ],
+              "type": "string",
+              "title": "Freq"
+            }
+          },
+          {
+            "name": "at_time",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "HH:MM",
+              "title": "At Time"
+            },
+            "description": "HH:MM"
+          },
+          {
+            "name": "weekday",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 6,
+              "minimum": 0,
+              "default": 0,
+              "title": "Weekday"
+            }
+          },
+          {
+            "name": "day",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 28,
+              "minimum": 1,
+              "default": 1,
+              "title": "Day"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SchedulePreview"
+                }
+              }
+            }
           },
           "422": {
             "description": "Validation Error",
@@ -517,6 +873,18 @@
             "title": "Notified",
             "default": false
           },
+          "notify_error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notify Error",
+            "description": "推送失败原因；null 表示推送成功或尚未尝试"
+          },
           "results": {
             "items": {
               "$ref": "#/components/schemas/ResultItem"
@@ -524,6 +892,17 @@
             "type": "array",
             "title": "Results",
             "default": []
+          },
+          "request": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/JobRequest"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "提交时的参数回显；老作业可能为 null"
           }
         },
         "type": "object",
@@ -535,6 +914,82 @@
           "created_at"
         ],
         "title": "JobDetail"
+      },
+      "JobRequest": {
+        "properties": {
+          "names": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Names",
+            "default": []
+          },
+          "webhook": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Webhook"
+          },
+          "mail_to": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mail To"
+          },
+          "always_notify": {
+            "type": "boolean",
+            "title": "Always Notify",
+            "default": false
+          },
+          "min_delay": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Min Delay"
+          },
+          "max_delay": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Delay"
+          },
+          "schedule_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Schedule Id",
+            "description": "由哪条定时调度创建；手动提交为 null"
+          }
+        },
+        "type": "object",
+        "title": "JobRequest",
+        "description": "作业提交时的原始参数回显。\n\n用户提完一轮之后最常见的疑问是「我到底填的哪个邮箱 / 有没有配 webhook」。\n原先这些只在 ``jobs.request``（JSON 列）里躺着，``_to_summary`` 直接丢弃，\n详情页无从显示——于是丢了收件人只能重填一遍。\n\n``notify_error`` 与这里配合才能定位问题：先看填了什么，再看推送为什么失败。"
       },
       "JobSummary": {
         "properties": {
@@ -622,6 +1077,18 @@
             "type": "boolean",
             "title": "Notified",
             "default": false
+          },
+          "notify_error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notify Error",
+            "description": "推送失败原因；null 表示推送成功或尚未尝试"
           }
         },
         "type": "object",
@@ -698,6 +1165,326 @@
         ],
         "title": "ResultItem"
       },
+      "ScheduleDeleteResponse": {
+        "properties": {
+          "schedule_id": {
+            "type": "string",
+            "title": "Schedule Id"
+          },
+          "deleted": {
+            "type": "boolean",
+            "const": true,
+            "title": "Deleted",
+            "default": true
+          }
+        },
+        "type": "object",
+        "required": [
+          "schedule_id"
+        ],
+        "title": "ScheduleDeleteResponse"
+      },
+      "ScheduleIn": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Name",
+            "description": "调度名称，如「华东区每日巡检」"
+          },
+          "enabled": {
+            "type": "boolean",
+            "title": "Enabled",
+            "description": "是否启用",
+            "default": true
+          },
+          "freq": {
+            "type": "string",
+            "enum": [
+              "daily",
+              "weekly",
+              "monthly"
+            ],
+            "title": "Freq",
+            "description": "频率"
+          },
+          "at_time": {
+            "type": "string",
+            "title": "At Time",
+            "description": "触发时刻 HH:MM（24 小时制）"
+          },
+          "weekday": {
+            "type": "integer",
+            "maximum": 6.0,
+            "minimum": 0.0,
+            "title": "Weekday",
+            "description": "weekly 用：0=周一 … 6=周日",
+            "default": 0
+          },
+          "day": {
+            "type": "integer",
+            "maximum": 28.0,
+            "minimum": 1.0,
+            "title": "Day",
+            "description": "monthly 用：每月几号（1-28）",
+            "default": 1
+          },
+          "names": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "maxItems": 200,
+            "minItems": 1,
+            "title": "Names",
+            "description": "企业全称列表"
+          },
+          "webhook": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Webhook",
+            "description": "webhook，留空则不发"
+          },
+          "mail_to": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mail To",
+            "description": "收件人，逗号分隔"
+          },
+          "always_notify": {
+            "type": "boolean",
+            "title": "Always Notify",
+            "description": "无异常也推送",
+            "default": false
+          },
+          "min_delay": {
+            "type": "number",
+            "maximum": 60.0,
+            "minimum": 0.0,
+            "title": "Min Delay",
+            "default": 3.5
+          },
+          "max_delay": {
+            "type": "number",
+            "maximum": 120.0,
+            "minimum": 0.0,
+            "title": "Max Delay",
+            "default": 6.5
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "freq",
+          "at_time",
+          "names"
+        ],
+        "title": "ScheduleIn",
+        "description": "新建/修改一条定时巡检。\n\n参数取舍：\n  * 不叫 cron：目标用户是销售主管，cron 表达式对他们是纯粹的负担，\n    而且本项目只需要「每日/每周/每月」这三种节奏；\n  * ``day`` 上限 28 而非 31——「每月 31 号」在 2/4/6/9/11 月不存在，\n    要额外定义「顺延到月末」还是「跳过」，两种都有坑。限 28 后每个月\n    都有这一天，行为零歧义；真要月末跑用 weekly 或 daily 即可。"
+      },
+      "ScheduleOut": {
+        "properties": {
+          "schedule_id": {
+            "type": "string",
+            "title": "Schedule Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "enabled": {
+            "type": "boolean",
+            "title": "Enabled"
+          },
+          "freq": {
+            "type": "string",
+            "enum": [
+              "daily",
+              "weekly",
+              "monthly"
+            ],
+            "title": "Freq"
+          },
+          "at_time": {
+            "type": "string",
+            "title": "At Time"
+          },
+          "weekday": {
+            "type": "integer",
+            "title": "Weekday",
+            "default": 0
+          },
+          "day": {
+            "type": "integer",
+            "title": "Day",
+            "default": 1
+          },
+          "names": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Names",
+            "default": []
+          },
+          "webhook": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Webhook"
+          },
+          "mail_to": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mail To"
+          },
+          "always_notify": {
+            "type": "boolean",
+            "title": "Always Notify",
+            "default": false
+          },
+          "min_delay": {
+            "type": "number",
+            "title": "Min Delay",
+            "default": 3.5
+          },
+          "max_delay": {
+            "type": "number",
+            "title": "Max Delay",
+            "default": 6.5
+          },
+          "next_run_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Run At"
+          },
+          "last_run_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Run At"
+          },
+          "last_job_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Job Id"
+          },
+          "last_state": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last State"
+          },
+          "last_error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Error"
+          },
+          "created_at": {
+            "type": "string",
+            "title": "Created At",
+            "default": ""
+          },
+          "updated_at": {
+            "type": "string",
+            "title": "Updated At",
+            "default": ""
+          },
+          "human": {
+            "type": "string",
+            "title": "Human",
+            "description": "节奏的中文描述，直接展示用",
+            "default": ""
+          },
+          "count": {
+            "type": "integer",
+            "title": "Count",
+            "description": "名单企业数",
+            "default": 0
+          }
+        },
+        "type": "object",
+        "required": [
+          "schedule_id",
+          "name",
+          "enabled",
+          "freq",
+          "at_time"
+        ],
+        "title": "ScheduleOut",
+        "description": "一条调度的对外形态。\n\n``next_run_at`` 与 ``human`` 同时给：前者给程序/排序用，后者直接显示。\n前端不自己拼「每周一 09:30」这类文案——拼错了没人会发现，\n而后端这一份是与实际计算共用同一组常量的。"
+      },
+      "SchedulePreview": {
+        "properties": {
+          "next_run_at": {
+            "type": "string",
+            "title": "Next Run At"
+          },
+          "human": {
+            "type": "string",
+            "title": "Human"
+          }
+        },
+        "type": "object",
+        "required": [
+          "next_run_at",
+          "human"
+        ],
+        "title": "SchedulePreview",
+        "description": "编辑弹窗的实时预览。\n\n两个字段都要给：``next_run_at`` 让人看到具体日期（能立刻发现「怎么排到下个月\n去了」这种明显错配），``human`` 用一句话说清节奏（「每周三 09:30」）。"
+      },
       "ValidationError": {
         "properties": {
           "loc": {
@@ -721,6 +1508,13 @@
           "type": {
             "type": "string",
             "title": "Error Type"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "ctx": {
+            "type": "object",
+            "title": "Context"
           }
         },
         "type": "object",

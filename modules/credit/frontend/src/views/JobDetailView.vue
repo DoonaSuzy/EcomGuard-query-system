@@ -29,6 +29,8 @@ const cancelling = ref(false)
 
 const job = computed(() => jobs.current)
 const results = computed(() => job.value?.results ?? [])
+// names 在 schema 里是可选的（Pydantic 默认 []），模板里直接 .length 会被判 undefined
+const reqNames = computed(() => job.value?.request?.names ?? [])
 const active = computed(() => job.value?.state === 'queued' || job.value?.state === 'running')
 
 // 以路由参数为准而不是 props：KeepAlive 缓存后 props 不会随同组件内参数切换更新，
@@ -197,6 +199,14 @@ const summaryTiles = computed(() => {
         <span class="mono">{{ job.error }}</span>
       </div>
 
+      <!-- 推送失败必须显式列出来。原先这个原因只进后台日志，
+           界面永远显示「未推送」，用户分不清是没异常、被跳过还是配错了。 -->
+      <div v-if="job.notify_error" class="err-box">
+        <strong>推送失败：</strong>
+        <span class="mono">{{ job.notify_error }}</span>
+        <span class="dim">（作业结果不受影响；修好配置后可手动重发）</span>
+      </div>
+
       <div class="grid cols-4">
         <div v-for="t in summaryTiles" :key="t.k" class="stat">
           <div class="k">{{ t.k }}</div>
@@ -209,6 +219,34 @@ const summaryTiles = computed(() => {
         <dt>结束时间</dt><dd>{{ fmtTime(job.finished_at) }}</dd>
         <dt>推送状态</dt><dd>{{ job.notified ? '已推送告警' : '未推送（无异常或未配置通道）' }}</dd>
       </dl>
+    </div>
+
+    <!-- 提交参数回显：用户填完这一轮之后最常见的疑问就是
+         「我到底填的哪个邮箱 / 有没有配 webhook」，原先这些只在库里，
+         详情页看不到，丢了收件人只能重填一遍。 -->
+    <div v-if="job.request" class="card">
+      <div class="card-title"><h2>提交参数</h2></div>
+      <dl class="kv">
+        <dt>企业数量</dt>
+        <dd>{{ reqNames.length }} 家<span v-if="job.request.schedule_id" class="dim">
+           · 由定时调度 <span class="mono">{{ job.request.schedule_id }}</span> 创建</span></dd>
+        <dt>告警邮件</dt>
+        <dd>{{ job.request.mail_to || '未配置' }}</dd>
+        <dt>Webhook</dt>
+        <dd class="mono break">{{ job.request.webhook || '未配置' }}</dd>
+        <dt>无异常也推送</dt>
+        <dd>{{ job.request.always_notify ? '是' : '否' }}</dd>
+        <dt>抓取间隔</dt>
+        <dd v-if="job.request.min_delay !== null && job.request.max_delay !== null">
+          {{ job.request.min_delay }}–{{ job.request.max_delay }} 秒</dd>
+        <dd v-else>—</dd>
+      </dl>
+        <details class="names-fold">
+        <summary>查看全部企业名单</summary>
+        <ol class="names-list">
+          <li v-for="(n, i) in reqNames" :key="`${n}-${i}`" class="mono">{{ n }}</li>
+        </ol>
+      </details>
     </div>
 
     <div class="card">
@@ -275,4 +313,10 @@ const summaryTiles = computed(() => {
 .kv { margin: 0; padding-top: 12px; border-top: 1px solid var(--c-border); }
 .search { max-width: 220px; }
 select.sm { padding: 6px 8px; font-size: 13px; width: auto; }
+.break { word-break: break-all; }
+.names-fold { margin-top: 12px; }
+.names-fold summary { cursor: pointer; font-size: 12.5px; color: var(--c-text-dim); }
+.names-fold summary:hover { color: var(--c-primary); }
+.names-list { margin: 8px 0 0; padding-left: 22px; max-height: 260px; overflow: auto; font-size: 12.5px; color: var(--c-text-dim); }
+.names-list li { line-height: 1.9; }
 </style>

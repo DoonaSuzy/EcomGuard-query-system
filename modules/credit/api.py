@@ -28,8 +28,10 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import csv
+import json
 import logging
 import os
+import re
 import sqlite3
 import threading
 import time
@@ -42,11 +44,28 @@ from typing import Any, Literal
 from fastapi import APIRouter, FastAPI, HTTPException, Query, Request
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, ValidationError, field_validator
 
 import credit_check
 import logkit
 import notify
+import schedule as sched
+
+# ---------------------------------------------------------------- .env 加载
+# **必须在下面所有 os.getenv 之前执行**，否则 CREDIT_DB / CREDIT_OUT 读到的是
+# 进程环境而不是 .env；更要紧的是 Worker 里发信读的 SMTP_HOST/SMTP_USER/
+# SMTP_PASS 全是 os.getenv，不加载 .env 就等于「收件人填了、邮件通道却永远
+# 显示未配置」——Web 提交的作业一封邮件都发不出去。
+#
+# 这个坑原先只在 notify.py 的 main() 和 healthcheck.py 里调 load_dotenv，
+# 也就是**只有命令行/计划任务路径**能读到 .env；API 服务路径（应用内的主用法）
+# 从来没加载过。前端「填写了邮箱、作业跑完、什么也没收到、也没有任何报错」的
+# 现象就是它造成的：_maybe_notify 拿到 mail_to 却在 `if not host` 分支里
+# 记一条 "未配置 SMTP_HOST" 的日志，界面上完全看不见。
+#
+# override=False（load_dotenv 默认）：已存在的环境变量优先，CI/容器里用真实
+# 环境变量顶替本地 .env 的用法保持不变。
+notify.load_dotenv()
 
 BASE_DIR = Path(__file__).resolve().parent
 #: 存储后端选择器。取值有两种形态，靠有无 ``://`` 区分：
@@ -70,6 +89,59 @@ OUT_DIR = Path(os.getenv("CREDIT_OUT", BASE_DIR / "data" / "results"))
 log = logging.getLogger("api")
 
 Verdict = Literal["ok", "alert", "notfound", "unknown"]
+
+#: 单封地址。刻意不追求 RFC 5322 全覆盖——那套正则长得没法维护，而且真正
+#: 校验地址是否存在的唯一办法是投递。这里只拦「明显不是邮箱」的输入
+#: （漏了 @、域名没有点、混进空格），把「填错了」的反馈提前到提交那一刻。
+_ADDR_RE = re.compile(r"^[^@\s,;，；]+@[^@\s,;，；]+\.[^@\s,;，；]+$")
+
+#: webhook 必须是 http(s) 且带主机。``https://`` 这种光秃秃的必须被拒。
+_WEBHOOK_RE = re.compile(r"^https?://[^\s/]+\.[^\s/]+(?:[/?#]\S*)?$")
+
+
+
+def _norm_mail(v: str | None) -> str | None:
+    """校验并**规范化**收件人，多个地址统一成英文逗号分隔。
+
+    为什么必须在这里管：原先 ``_maybe_notify`` 用的是
+    ``mail_to.split(",")``，而前端输入框允许中文逗号（它的正则字符类是
+    ``[,，]``），于是 ``a@x.com，b@y.com`` 会被当成**一个**地址塞进
+    ``send_mail``——SMTP 服务器要么报错、要么只投第一个，用户看到的是
+    「填了两个只发了一个」，且没有任何日志能定位。
+
+    这里顺手把逗号、分号、中英文都归一，与 ``notify.parse_addrs`` 同一口径，
+    这样库里存的永远是可直接 split 的形态（计划任务读库时也受益）。
+
+    提成模块级函数是因为 ``CheckRequest`` 与 ``ScheduleIn`` 必须共用同一套
+    规则：调度建出来的作业最终走的是同一条推送链路，两处校验若各写一份，
+    迟早漂移成「手动能填、定时静默失败」。
+    """
+    import notify as _notify
+    addrs = _notify.parse_addrs(v)
+    if not addrs:
+        return None
+    bad = [a for a in addrs if not _ADDR_RE.match(a)]
+    if bad:
+        raise ValueError(f"收件人格式不正确：{', '.join(bad)}")
+    return ",".join(addrs)
+
+
+def _norm_webhook(v: str | None) -> str | None:
+    """webhook 必须是带主机的 http(s) 地址。
+
+    原先前端只判 ``/^https?:\\/\\//``，光秃秃一个 ``https://`` 也能提交；
+    服务端又不校验，作业会一路跑到推送那一步才抛
+    ``MissingSchema``/``InvalidURL``——而那个异常被
+    ``errors.append(f"webhook: {e}")`` 收进日志，界面上看不到，
+    用户以为推送了、其实一条都没发出去。
+    """
+    v = (v or "").strip()
+    if not v:
+        return None
+    if not _WEBHOOK_RE.match(v):
+        raise ValueError(
+            "webhook 需形如 https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=xxx")
+    return v
 
 
 # ============================================================ 数据模型
@@ -105,6 +177,16 @@ class CheckRequest(BaseModel):
         if v < lo:
             raise ValueError(f"max_delay({v}) 不能小于 min_delay({lo})")
         return v
+
+    @field_validator("mail_to")
+    @classmethod
+    def _check_mail(cls, v: str | None) -> str | None:
+        return _norm_mail(v)
+
+    @field_validator("webhook")
+    @classmethod
+    def _check_webhook(cls, v: str | None) -> str | None:
+        return _norm_webhook(v)
 
 
 class ResultItem(BaseModel):
@@ -153,10 +235,155 @@ class JobSummary(BaseModel):
     finished_at: str | None = None
     error: str | None = None
     notified: bool = False
+    notify_error: str | None = Field(
+        None, description="推送失败原因；null 表示推送成功或尚未尝试")
+
+
+class JobRequest(BaseModel):
+    """作业提交时的原始参数回显。
+
+    用户提完一轮之后最常见的疑问是「我到底填的哪个邮箱 / 有没有配 webhook」。
+    原先这些只在 ``jobs.request``（JSON 列）里躺着，``_to_summary`` 直接丢弃，
+    详情页无从显示——于是丢了收件人只能重填一遍。
+
+    ``notify_error`` 与这里配合才能定位问题：先看填了什么，再看推送为什么失败。
+    """
+    names: list[str] = []
+    webhook: str | None = None
+    mail_to: str | None = None
+    always_notify: bool = False
+    min_delay: float | None = None
+    max_delay: float | None = None
+    schedule_id: str | None = Field(
+        None, description="由哪条定时调度创建；手动提交为 null")
 
 
 class JobDetail(JobSummary):
     results: list[ResultItem] = []
+    request: JobRequest | None = Field(
+        None, description="提交时的参数回显；老作业可能为 null")
+
+
+# ------------------------------------------------------------ 调度模型
+#: HH:MM。前端原生 input[type=time] 也产出这个形状，两边口径一致。
+_TIME_RE = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
+
+
+class ScheduleIn(BaseModel):
+    """新建/修改一条定时巡检。
+
+    参数取舍：
+      * 不叫 cron：目标用户是销售主管，cron 表达式对他们是纯粹的负担，
+        而且本项目只需要「每日/每周/每月」这三种节奏；
+      * ``day`` 上限 28 而非 31——「每月 31 号」在 2/4/6/9/11 月不存在，
+        要额外定义「顺延到月末」还是「跳过」，两种都有坑。限 28 后每个月
+        都有这一天，行为零歧义；真要月末跑用 weekly 或 daily 即可。
+    """
+    name: str = Field(..., min_length=1, max_length=100,
+                      description="调度名称，如「华东区每日巡检」")
+    enabled: bool = Field(True, description="是否启用")
+    freq: Literal["daily", "weekly", "monthly"] = Field(..., description="频率")
+    at_time: str = Field(..., description="触发时刻 HH:MM（24 小时制）")
+    weekday: int = Field(0, ge=0, le=6,
+                         description="weekly 用：0=周一 … 6=周日")
+    day: int = Field(1, ge=1, le=28,
+                     description="monthly 用：每月几号（1-28）")
+    names: list[str] = Field(..., min_length=1, max_length=200,
+                             description="企业全称列表")
+    webhook: str | None = Field(None, description="webhook，留空则不发")
+    mail_to: str | None = Field(None, description="收件人，逗号分隔")
+    always_notify: bool = Field(False, description="无异常也推送")
+    min_delay: float = Field(3.5, ge=0, le=60)
+    max_delay: float = Field(6.5, ge=0, le=120)
+
+    @field_validator("at_time")
+    @classmethod
+    def _check_time(cls, v: str) -> str:
+        v = (v or "").strip()
+        if not _TIME_RE.match(v):
+            raise ValueError(f"触发时刻需形如 09:30（24 小时制），收到 {v!r}")
+        return v
+
+    @field_validator("names")
+    @classmethod
+    def _clean_names(cls, v: list[str]) -> list[str]:
+        out, seen = [], set()
+        for raw in v:
+            n = (raw or "").strip()
+            if not n or n.startswith("#"):
+                continue
+            if n not in seen:
+                seen.add(n)
+                out.append(n)
+        if not out:
+            raise ValueError("names 清洗后为空")
+        return out
+
+    @field_validator("max_delay")
+    @classmethod
+    def _order_delay(cls, v: float, info) -> float:
+        lo = info.data.get("min_delay", 0)
+        if v < lo:
+            raise ValueError(f"max_delay({v}) 不能小于 min_delay({lo})")
+        return v
+
+    # 与 CheckRequest 共用同一套推送达人校验：调度建出来的作业最终走同一条
+    # 推送链路，两处规则若各写一份，迟早漂移成「手动能填、定时静默失败」。
+    @field_validator("mail_to")
+    @classmethod
+    def _check_mail(cls, v: str | None) -> str | None:
+        return _norm_mail(v)
+
+    @field_validator("webhook")
+    @classmethod
+    def _check_webhook(cls, v: str | None) -> str | None:
+        return _norm_webhook(v)
+
+
+class ScheduleOut(BaseModel):
+    """一条调度的对外形态。
+
+    ``next_run_at`` 与 ``human`` 同时给：前者给程序/排序用，后者直接显示。
+    前端不自己拼「每周一 09:30」这类文案——拼错了没人会发现，
+    而后端这一份是与实际计算共用同一组常量的。
+    """
+    schedule_id: str
+    name: str
+    enabled: bool
+    freq: Literal["daily", "weekly", "monthly"]
+    at_time: str
+    weekday: int = 0
+    day: int = 1
+    names: list[str] = []
+    webhook: str | None = None
+    mail_to: str | None = None
+    always_notify: bool = False
+    min_delay: float = 3.5
+    max_delay: float = 6.5
+    next_run_at: str | None = None
+    last_run_at: str | None = None
+    last_job_id: str | None = None
+    last_state: str | None = None
+    last_error: str | None = None
+    created_at: str = ""
+    updated_at: str = ""
+    human: str = Field("", description="节奏的中文描述，直接展示用")
+    count: int = Field(0, description="名单企业数")
+
+
+class ScheduleDeleteResponse(BaseModel):
+    schedule_id: str
+    deleted: Literal[True] = True
+
+
+class SchedulePreview(BaseModel):
+    """编辑弹窗的实时预览。
+
+    两个字段都要给：``next_run_at`` 让人看到具体日期（能立刻发现「怎么排到下个月
+    去了」这种明显错配），``human`` 用一句话说清节奏（「每周三 09:30」）。
+    """
+    next_run_at: str
+    human: str
 
 
 # ============================================================ 存储层
@@ -175,6 +402,7 @@ CREATE TABLE IF NOT EXISTS jobs (
     finished_at TEXT,
     error       TEXT,
     notified    INTEGER NOT NULL DEFAULT 0,
+    notify_error TEXT,
     request     TEXT NOT NULL,
     csv_path    TEXT
 );
@@ -195,6 +423,28 @@ CREATE TABLE IF NOT EXISTS results (
     FOREIGN KEY (job_id) REFERENCES jobs(job_id) ON DELETE CASCADE
 );
 CREATE INDEX IF NOT EXISTS idx_results_job ON results(job_id, seq);
+CREATE TABLE IF NOT EXISTS schedules (
+    schedule_id   TEXT PRIMARY KEY,
+    name          TEXT NOT NULL,
+    enabled       INTEGER NOT NULL DEFAULT 1,
+    freq          TEXT NOT NULL,
+    at_time       TEXT NOT NULL,
+    weekday       INTEGER NOT NULL DEFAULT 0,
+    day           INTEGER NOT NULL DEFAULT 1,
+    names         TEXT NOT NULL,
+    webhook       TEXT,
+    mail_to       TEXT,
+    always_notify INTEGER NOT NULL DEFAULT 0,
+    min_delay     REAL NOT NULL DEFAULT 3.5,
+    max_delay     REAL NOT NULL DEFAULT 6.5,
+    next_run_at   TEXT,
+    last_run_at   TEXT,
+    last_job_id   TEXT,
+    last_state    TEXT,
+    last_error    TEXT,
+    created_at    TEXT NOT NULL,
+    updated_at    TEXT NOT NULL
+);
 """
 
 #: MySQL 侧：TEXT 不能做主键（InnoDB 要求定长前缀或改成 VARCHAR），
@@ -212,6 +462,7 @@ CREATE TABLE IF NOT EXISTS jobs (
     finished_at VARCHAR(40) DEFAULT NULL,
     error       TEXT,
     notified    TINYINT(1) NOT NULL DEFAULT 0,
+    notify_error TEXT,
     request     LONGTEXT NOT NULL,
     csv_path    VARCHAR(1024) DEFAULT NULL,
     PRIMARY KEY (job_id),
@@ -237,6 +488,41 @@ CREATE TABLE IF NOT EXISTS results (
     KEY idx_results_job (job_id, seq),
     CONSTRAINT fk_results_job FOREIGN KEY (job_id)
         REFERENCES jobs(job_id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+"""
+
+#: 调度表。字段取舍说明：
+#:   * ``names`` 存 JSON 数组文本而不是另建关联表——一份调度就是一个名单，
+#:     关系是 1:1，拆表只会多一次 join 和一堆级联删除；
+#:   * ``next_run_at`` / ``last_run_at`` 存**带时区**的 ISO 串。带时区是关键：
+#:     不带时区时，库里一条 "2026-10-20T09:00:00" 到底是本机时间还是 UTC
+#:     没有任何线索，一旦算错就是「差 8 小时」这种极难自证的错；
+#:   * ``last_state`` / ``last_error`` 冗余记录最近一次结果，让列表页不必
+#:     反查 jobs 表（作业可能被清理，调度记录要留痕）。
+SCHEMA_MYSQL_SCHEDULES = """
+CREATE TABLE IF NOT EXISTS schedules (
+    schedule_id   VARCHAR(64) NOT NULL,
+    name          VARCHAR(255) NOT NULL,
+    enabled       TINYINT(1) NOT NULL DEFAULT 1,
+    freq          VARCHAR(16) NOT NULL,
+    at_time       VARCHAR(8) NOT NULL,
+    weekday       INT NOT NULL DEFAULT 0,
+    day           INT NOT NULL DEFAULT 1,
+    names         LONGTEXT NOT NULL,
+    webhook       VARCHAR(1024) DEFAULT NULL,
+    mail_to       VARCHAR(1024) DEFAULT NULL,
+    always_notify TINYINT(1) NOT NULL DEFAULT 0,
+    min_delay     DOUBLE NOT NULL DEFAULT 3.5,
+    max_delay     DOUBLE NOT NULL DEFAULT 6.5,
+    next_run_at   VARCHAR(40) DEFAULT NULL,
+    last_run_at   VARCHAR(40) DEFAULT NULL,
+    last_job_id   VARCHAR(64) DEFAULT NULL,
+    last_state    VARCHAR(16) DEFAULT NULL,
+    last_error    TEXT,
+    created_at    VARCHAR(40) NOT NULL,
+    updated_at    VARCHAR(40) NOT NULL,
+    PRIMARY KEY (schedule_id),
+    KEY idx_schedules_due (enabled, next_run_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
 """
 
@@ -304,6 +590,36 @@ class Store:
             self.path.parent.mkdir(parents=True, exist_ok=True)
             with self._conn() as c:
                 c.executescript(SCHEMA_SQLITE)
+                self._sqlite_add_columns(c)
+
+    # -- 列级迁移 -------------------------------------------------------
+    #: 建表用 ``CREATE TABLE IF NOT EXISTS``，对**已存在**的表完全无操作。
+    #: 于是「给 jobs 加一列」这件事必须单独做一次，否则老库跑新代码时
+    #: INSERT/SELECT 会报 "no such column"。这里只补“新增的可空列”，
+    #: 不碰类型变更（SQLite 改列类型要重建表，代价与风险都不成比例）。
+    _SQLITE_ADDED_COLUMNS = (
+        ("jobs", "notify_error", "TEXT"),
+    )
+
+    def _sqlite_add_columns(self, conn) -> None:
+        for table, column, decl in self._SQLITE_ADDED_COLUMNS:
+            cols = {r["name"] for r in conn.execute(f"PRAGMA table_info({table})")}
+            if column not in cols:
+                conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
+
+    def _mysql_add_columns(self, conn) -> None:
+        """MySQL 侧同样补列；``ADD COLUMN IF NOT EXISTS`` 8.0.29+ 才有，
+
+        而本项目声明支持 8.x 全系，所以先查 information_schema 再决定加不加。
+        """
+        for table, column, decl in self._SQLITE_ADDED_COLUMNS:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT COUNT(*) AS n FROM information_schema.COLUMNS "
+                    "WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME=%s "
+                    "AND COLUMN_NAME=%s", (table, column))
+                if cur.fetchone()["n"] == 0:
+                    cur.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
 
     # -- 连接管理 -------------------------------------------------------
     def _mysql_connect(self):
@@ -321,6 +637,9 @@ class Store:
             with conn.cursor() as cur:
                 cur.execute(SCHEMA_MYSQL)
                 cur.execute(SCHEMA_MYSQL_RESULTS)
+                cur.execute(SCHEMA_MYSQL_SCHEDULES)
+            conn.commit()
+            self._mysql_add_columns(conn)
             conn.commit()
         finally:
             conn.close()
@@ -399,9 +718,18 @@ class Store:
             self._execute(c, f"UPDATE jobs SET {','.join(sets)} WHERE job_id=?",
                           tuple(vals))
 
-    def mark_notified(self, job_id: str) -> None:
+    def mark_notified(self, job_id: str, error: str = "") -> None:
+        """记录一次推送结果。
+
+        ``error`` 非空表示推送失败：此时 ``notified`` 仍置 1——它的语义是
+        「推送已经尝试过」，而不是「推送成功」。这个区分很重要：原先失败路径
+        什么都不写，作业列表里那一栏永远显示「未推送」，用户无从判断
+        「还没跑完」「被跳过」还是「试了但失败」。失败原因落进
+        ``notify_error``，通过 JobSummary 直接显示到界面上。
+        """
         with self._conn() as c:
-            self._execute(c, "UPDATE jobs SET notified=1 WHERE job_id=?", (job_id,))
+            self._execute(c, "UPDATE jobs SET notified=1, notify_error=? "
+                             "WHERE job_id=?", (error or None, job_id))
 
     def add_result(self, job_id: str, seq: int, row: dict) -> None:
         values = (job_id, seq, row.get("输入名称", ""), row.get("匹配名称", ""),
@@ -460,6 +788,127 @@ class Store:
                 "GROUP BY verdict", (job_id,))
         return {r["verdict"]: r["n"] for r in rows}
 
+    # -- 调度 -----------------------------------------------------------
+    # 这一组方法只做存取，不做时间计算——「下一次什么时候跑」全在 schedule.py，
+    # 这样时间逻辑只有一份实现，也才能被单元测试脱离数据库直接跑。
+    SCHEDULE_COLS = ("schedule_id,name,enabled,freq,at_time,weekday,day,names,"
+                     "webhook,mail_to,always_notify,min_delay,max_delay,"
+                     "next_run_at,last_run_at,last_job_id,last_state,last_error,"
+                     "created_at,updated_at")
+
+    @staticmethod
+    def _norm_schedule(r: dict) -> dict:
+        """把后端差异抹平：布尔列在 SQLite 是 0/1，在 MySQL 是 0/1 也可能 None。"""
+        out = dict(r)
+        out["enabled"] = bool(r.get("enabled"))
+        out["always_notify"] = bool(r.get("always_notify"))
+        out["weekday"] = int(r.get("weekday") or 0)
+        out["day"] = int(r.get("day") or 1)
+        out["min_delay"] = float(r.get("min_delay") if r.get("min_delay") is not None else 3.5)
+        out["max_delay"] = float(r.get("max_delay") if r.get("max_delay") is not None else 6.5)
+        return out
+
+    def list_schedules(self) -> list[dict]:
+        with self._conn() as c:
+            rows = self._fetchall(
+                c, f"SELECT {self.SCHEDULE_COLS} FROM schedules "
+                   "ORDER BY created_at")
+        return [self._norm_schedule(r) for r in rows]
+
+    def get_schedule(self, schedule_id: str) -> dict | None:
+        with self._conn() as c:
+            rows = self._fetchall(
+                c, f"SELECT {self.SCHEDULE_COLS} FROM schedules "
+                   "WHERE schedule_id=?", (schedule_id,))
+        return self._norm_schedule(rows[0]) if rows else None
+
+    def add_schedule(self, fields: dict) -> str:
+        """新增一条调度。``fields`` 里必须已含 next_run_at（由 schedule.py 算好）。"""
+        sid = f"sch_{datetime.now():%Y%m%d_%H%M%S}_{uuid.uuid4().hex[:6]}"
+        now = _now()
+        cols = ("schedule_id,name,enabled,freq,at_time,weekday,day,names,webhook,"
+                "mail_to,always_notify,min_delay,max_delay,next_run_at,"
+                "created_at,updated_at")
+        vals = (sid, fields["name"], int(bool(fields.get("enabled", True))),
+                fields["freq"], fields["at_time"], int(fields.get("weekday") or 0),
+                int(fields.get("day") or 1), fields["names"],
+                fields.get("webhook") or None, fields.get("mail_to") or None,
+                int(bool(fields.get("always_notify"))),
+                float(fields.get("min_delay") or 3.5),
+                float(fields.get("max_delay") or 6.5),
+                fields["next_run_at"], now, now)
+        with self._conn() as c:
+            self._execute(c, f"INSERT INTO schedules({cols}) "
+                             f"VALUES({','.join('?' * len(vals))})", vals)
+        return sid
+
+    def update_schedule(self, schedule_id: str, fields: dict) -> None:
+        """局部更新。只允许改白名单字段，避免拼 SQL 时被注入奇怪列名。"""
+        allowed = {"name", "enabled", "freq", "at_time", "weekday", "day", "names",
+                   "webhook", "mail_to", "always_notify", "min_delay", "max_delay",
+                   "next_run_at"}
+        sets: list[str] = []
+        vals: list[Any] = []
+        for k, v in fields.items():
+            if k not in allowed:
+                continue
+            if k in ("enabled", "always_notify"):
+                v = int(bool(v))
+            elif k in ("weekday", "day"):
+                v = int(v or 0)
+            elif k in ("min_delay", "max_delay"):
+                v = float(v)
+            sets.append(f"{k}=?")
+            vals.append(v)
+        if not sets:
+            return
+        sets.append("updated_at=?")
+        vals.extend([_now(), schedule_id])
+        with self._conn() as c:
+            self._execute(c, f"UPDATE schedules SET {','.join(sets)} "
+                             "WHERE schedule_id=?", tuple(vals))
+
+    def delete_schedule(self, schedule_id: str) -> None:
+        with self._conn() as c:
+            self._execute(c, "DELETE FROM schedules WHERE schedule_id=?",
+                          (schedule_id,))
+
+    def set_schedule_next_run(self, schedule_id: str, next_run_at: str,
+                              advance_marker: bool = False) -> None:
+        """推进 next_run_at。
+
+        ``advance_marker=True`` 时同时写 last_run_at=now——这一对写入必须原子，
+        否则「已推进但没记运行时间」会让补跑判断（compare last_run_at）失真。
+        """
+        if advance_marker:
+            sql = ("UPDATE schedules SET next_run_at=?, last_run_at=?, updated_at=? "
+                   "WHERE schedule_id=?")
+            params: tuple = (next_run_at, _now(), _now(), schedule_id)
+        else:
+            sql = "UPDATE schedules SET next_run_at=?, updated_at=? WHERE schedule_id=?"
+            params = (next_run_at, _now(), schedule_id)
+        with self._conn() as c:
+            self._execute(c, sql, params)
+
+    def set_schedule_result(self, schedule_id: str, *, last_job_id: str | None = None,
+                            last_state: str | None = None,
+                            last_error: str | None = None) -> None:
+        sets = ["updated_at=?"]
+        vals: list[Any] = [_now()]
+        if last_job_id is not None:
+            sets.append("last_job_id=?")
+            vals.append(last_job_id)
+        if last_state is not None:
+            sets.append("last_state=?")
+            vals.append(last_state)
+        if last_error is not None:
+            sets.append("last_error=?")
+            vals.append(last_error)
+        vals.append(schedule_id)
+        with self._conn() as c:
+            self._execute(c, f"UPDATE schedules SET {','.join(sets)} "
+                             "WHERE schedule_id=?", tuple(vals))
+
 
 def _row_to_item(r: dict) -> ResultItem:
     return ResultItem(
@@ -478,7 +927,33 @@ def _to_summary(j: dict, store: Store) -> JobSummary:
         notfound=cnt.get("notfound", 0), unknown=cnt.get("unknown", 0),
         created_at=j["created_at"], started_at=j["started_at"],
         finished_at=j["finished_at"], error=j["error"],
-        notified=bool(j["notified"]))
+        notified=bool(j["notified"]),
+        notify_error=j.get("notify_error") or None)
+
+
+def _sync_schedule(store: Store, job_id: str, state: str,
+                   error: str | None = None) -> None:
+    """把作业终态回写到触发它的调度行（普通作业直接返回）。
+
+    缺这一步，调度列表会永远停在「排队中」：用户看到的是「设了每天 09:30，
+    状态一直没变」，与「填了邮箱、跑完了、什么也没收到」属于同一类静默失败
+    —— 配置生效了却无从确认。
+
+    推送失败单独记：``notify_error`` 在 ``_maybe_notify`` 里才写入，
+    所以 ``done`` 这一条必须等通知跑完再回写。
+    """
+    try:
+        j = store.get_job(job_id)
+        if not j:
+            return
+        req = json.loads(j["request"] or "{}")
+    except (TypeError, ValueError):
+        return
+    sid = req.get("schedule_id")
+    if not sid:
+        return
+    store.set_schedule_result(sid, last_job_id=job_id, last_state=state,
+                              last_error=(error or j.get("notify_error") or "")[:500])
 
 
 # ============================================================ 作业队列
@@ -557,8 +1032,9 @@ class Worker:
         try:
             checker = self._ensure_checker(req)
         except BaseException as e:
-            self.store.set_state(job_id, "failed",
-                                 error=f"浏览器启动失败：{type(e).__name__}: {e}"[:500])
+            msg = f"浏览器启动失败：{type(e).__name__}: {e}"[:500]
+            self.store.set_state(job_id, "failed", error=msg)
+            _sync_schedule(self.store, job_id, "failed", msg)
             log.error("浏览器启动失败：%s", e)
             return
 
@@ -574,8 +1050,9 @@ class Worker:
                     checker.sleep_between()
         except BaseException as e:
             log.exception("作业 %s 抓取中断", job_id)
-            self.store.set_state(job_id, "failed",
-                                 error=f"抓取中断：{type(e).__name__}: {e}"[:500])
+            msg = f"抓取中断：{type(e).__name__}: {e}"[:500]
+            self.store.set_state(job_id, "failed", error=msg)
+            _sync_schedule(self.store, job_id, "failed", msg)
             # 已抓到的部分仍写 CSV，便于排查
             self._write_csv(job_id, rows)
             return
@@ -585,6 +1062,8 @@ class Worker:
         log.info("作业 %s 完成，CSV=%s", job_id, csv_path)
 
         self._maybe_notify(job_id, rows, req)
+        # 放在通知之后：notify_error 是 _maybe_notify 写的，先回写就永远读不到
+        _sync_schedule(self.store, job_id, "done")
 
     def _write_csv(self, job_id: str, rows: list[dict]) -> Path:
         OUT_DIR.mkdir(parents=True, exist_ok=True)
@@ -620,16 +1099,20 @@ class Worker:
         if mail_to:
             host = os.getenv("SMTP_HOST", "")
             if not host:
-                errors.append("mail: 未配置 SMTP_HOST")
+                errors.append("mail: 未配置 SMTP_HOST（在 .env 里设置后重启服务）")
             else:
                 try:
                     use_ssl = os.getenv("SMTP_SSL", "").lower() in ("1", "true", "yes") \
                         or os.getenv("SMTP_PORT", "587") == "465"
+                    # 用 notify.parse_addrs 而不是 split(",")：库里可能存着
+                    # 老作业（写入 CheckRequest 校验之前）用中文逗号分隔的地址。
+                    addrs = notify.parse_addrs(mail_to)
+                    if not addrs:
+                        raise ValueError(f"收件人解析为空：{mail_to!r}")
                     notify.send_mail(
                         host, int(os.getenv("SMTP_PORT", "465" if use_ssl else "587")),
                         os.getenv("SMTP_USER", ""), os.getenv("SMTP_PASS", ""),
-                        [x.strip() for x in mail_to.split(",") if x.strip()],
-                        title, md, True, use_ssl=use_ssl)
+                        addrs, title, md, True, use_ssl=use_ssl)
                 except Exception as e:
                     errors.append(f"mail: {e}")
                     log.error("邮件发送失败：%s", e)
@@ -637,7 +1120,13 @@ class Worker:
             self.store.mark_notified(job_id)
             log.info("作业 %s 推送成功", job_id)
         else:
-            log.error("作业 %s 推送部分失败：%s", job_id, "; ".join(errors))
+            # 失败原因必须落库并出现在作业详情里。只写日志的问题：
+            # 服务是后台进程，用户看到的永远是「未推送」，无从判断是
+            # 还没跑完、被跳过，还是配错了邮箱。
+            joined = "；".join(errors)
+            self.store.mark_notified(job_id, error=joined)
+            log.error("作业 %s 推送部分失败：%s", job_id, joined)
+
 
 
 # ============================================================ FastAPI
@@ -649,11 +1138,19 @@ async def lifespan(app: FastAPI):
     worker.start()
     app.state.store = store
     app.state.worker = worker
-    log.info("服务启动：db=%s(%s) out=%s", DB_TARGET, store.backend, OUT_DIR)
+    # 调度线程：补算缺失的 next_run_at，然后开始轮询。
+    # 必须在 worker.start() 之后——它触发的作业要立刻有人消费。
+    fixed = sched.ensure_next_run(store)
+    scheduler = sched.Scheduler(store, worker)
+    scheduler.start()
+    app.state.scheduler = scheduler
+    log.info("服务启动：db=%s(%s) out=%s 调度补算 %d 条",
+             DB_TARGET, store.backend, OUT_DIR, fixed)
     try:
         yield
     finally:
-        log.info("服务关闭，等待 worker 退出")
+        log.info("服务关闭，等待调度与 worker 退出")
+        scheduler.stop()
         await asyncio.get_running_loop().run_in_executor(None, worker.stop)
 
 
@@ -789,6 +1286,31 @@ def list_jobs(request: Request,
     return [_to_summary(j, store) for j in store.list_jobs(limit)]
 
 
+def _parse_request(raw: str | None) -> JobRequest | None:
+    """把 ``jobs.request`` 的 JSON 还原成 JobRequest。
+
+    容错优先：这是展示用的回显字段，库里可能躺着历史作业/半截 JSON，
+    解析失败就当没有——绝不能因为回显失败把整个详情页打成 500。
+    """
+    if not raw:
+        return None
+    try:
+        obj = json.loads(raw)
+    except (ValueError, TypeError):
+        return None
+    if not isinstance(obj, dict):
+        return None
+    try:
+        return JobRequest(**obj)
+    except ValidationError:
+        # 老作业可能带已废弃的键，逐项尽力还原而不是整块丢弃
+        keep = {k: obj[k] for k in JobRequest.model_fields if k in obj}
+        try:
+            return JobRequest(**keep)
+        except ValidationError:
+            return None
+
+
 @router.get("/jobs/{job_id}", response_model=JobDetail, summary="作业状态",
             tags=["jobs"])
 def get_job(job_id: str, request: Request) -> JobDetail:
@@ -798,7 +1320,8 @@ def get_job(job_id: str, request: Request) -> JobDetail:
         raise HTTPException(404, f"作业不存在：{job_id}")
     s = _to_summary(j, store)
     items = [_row_to_item(r) for r in store.get_results(job_id)]
-    return JobDetail(**s.model_dump(), results=items)
+    return JobDetail(**s.model_dump(), results=items,
+                     request=_parse_request(j.get("request")))
 
 
 @router.get("/jobs/{job_id}/results", response_model=list[ResultItem],
@@ -851,7 +1374,184 @@ def cancel_job(job_id: str, request: Request) -> CancelResponse:
         if job_id in w.q:
             w.q.remove(job_id)
     store.set_state(job_id, "cancelled", error="用户取消")
+    # 调度触发的作业被取消，调度行不能一直显示「排队中」
+    _sync_schedule(store, job_id, "cancelled", "用户取消")
     return CancelResponse(job_id=job_id, state="cancelled")
+
+
+# ============================================================ 定时巡检
+# 这一组接口解决的是一个具体抱怨：「营业执照没有能设置每日/每周/每月检查的地方」。
+#
+# 此前「定时」只有 Windows 任务计划程序那条路（install_schedule_task.ps1），
+# 配置在命令行里、状态在任务计划程序里、历史在 logs/ 文本里 —— 三样都不在应用内，
+# 等于业务人员没有任何可见入口。这里把调度变成一等公民：配置进库、由网页读写、
+# 执行结果就是普通作业（复用既有详情页与通知链路）。
+#
+# 与「手动提交」共用同一个 worker，所以定时任务和人工提交天然串行排队，
+# 不会出现两个浏览器同时打目标站（那会直接触发瑞数风控）。
+def _schedule_out(s: dict) -> ScheduleOut:
+    """库记录 → 对外模型。名单从 JSON 文本还原成数组。"""
+    try:
+        names = json.loads(s.get("names") or "[]")
+        if not isinstance(names, list):
+            names = []
+    except ValueError:
+        names = []
+    return ScheduleOut(
+        schedule_id=s["schedule_id"], name=s["name"], enabled=s["enabled"],
+        freq=s["freq"], at_time=s["at_time"], weekday=s["weekday"],
+        day=s["day"], names=names, webhook=s.get("webhook"),
+        mail_to=s.get("mail_to"), always_notify=s["always_notify"],
+        min_delay=s["min_delay"], max_delay=s["max_delay"],
+        next_run_at=s.get("next_run_at"), last_run_at=s.get("last_run_at"),
+        last_job_id=s.get("last_job_id"), last_state=s.get("last_state"),
+        last_error=s.get("last_error"), created_at=s.get("created_at") or "",
+        updated_at=s.get("updated_at") or "",
+        human=sched.describe(s["freq"], s["at_time"],
+                             weekday=s["weekday"], day=s["day"]),
+        count=len(names))
+
+
+async def _restart_scheduler(request: Request) -> None:
+    """配置变更后让调度线程立刻按新配置重算（而不是等下一轮轮询）。
+
+    不是必须的——轮询每 30 秒本来就会读到新配置；但「改了时间、界面上
+    next_run_at 还是旧值」会让人以为没保存成功，所以这里主动跑一轮 tick 并把
+    next_run_at 重算一遍，让界面立刻自证。
+    """
+    s: sched.Scheduler | None = getattr(request.app.state, "scheduler", None)
+    if s is None:
+        return
+    await asyncio.get_running_loop().run_in_executor(None, s.tick)
+
+
+@router.get("/schedules", response_model=list[ScheduleOut],
+            summary="定时巡检列表", tags=["schedules"])
+def list_schedules(request: Request) -> list[ScheduleOut]:
+    store: Store = request.app.state.store
+    return [_schedule_out(s) for s in store.list_schedules()]
+
+
+@router.post("/schedules", response_model=ScheduleOut, status_code=201,
+             summary="新建定时巡检", tags=["schedules"])
+async def create_schedule(req: ScheduleIn, request: Request) -> ScheduleOut:
+    store: Store = request.app.state.store
+    fields = req.model_dump()
+    fields["names"] = json.dumps(req.names, ensure_ascii=False)
+    fields["next_run_at"] = sched._iso(
+        sched.compute_next(req.freq, req.at_time,
+                           weekday=req.weekday, day=req.day))
+    sid = store.add_schedule(fields)
+    log.info("新调度 %s：%s（下次 %s）", sid, fields["name"],
+             fields["next_run_at"])
+    await _restart_scheduler(request)
+    return _schedule_out(store.get_schedule(sid))
+
+
+@router.put("/schedules/{schedule_id}", response_model=ScheduleOut,
+            summary="修改定时巡检", tags=["schedules"])
+async def update_schedule(schedule_id: str, req: ScheduleIn,
+                          request: Request) -> ScheduleOut:
+    store: Store = request.app.state.store
+    if not store.get_schedule(schedule_id):
+        raise HTTPException(404, f"调度不存在：{schedule_id}")
+    fields = req.model_dump()
+    fields["names"] = json.dumps(req.names, ensure_ascii=False)
+    # 改了频率/时刻就必须重算下次触发，否则会按旧节奏继续跑
+    fields["next_run_at"] = sched._iso(
+        sched.compute_next(req.freq, req.at_time,
+                           weekday=req.weekday, day=req.day))
+    store.update_schedule(schedule_id, fields)
+    log.info("调度 %s 已更新（下次 %s）", schedule_id, fields["next_run_at"])
+    await _restart_scheduler(request)
+    return _schedule_out(store.get_schedule(schedule_id))
+
+
+@router.post("/schedules/{schedule_id}/toggle", response_model=ScheduleOut,
+             summary="启用/停用定时巡检", tags=["schedules"])
+async def toggle_schedule(schedule_id: str, request: Request,
+                          enabled: bool = Query(..., description="目标状态")) -> ScheduleOut:
+    store: Store = request.app.state.store
+    s = store.get_schedule(schedule_id)
+    if not s:
+        raise HTTPException(404, f"调度不存在：{schedule_id}")
+    fields: dict[str, Any] = {"enabled": enabled}
+    if enabled:
+        # 重新启用时按「现在」重算，避免停用两周后一开就补跑一个过期时刻
+        fields["next_run_at"] = sched._iso(
+            sched.compute_next(s["freq"], s["at_time"],
+                               weekday=s["weekday"], day=s["day"]))
+    store.update_schedule(schedule_id, fields)
+    await _restart_scheduler(request)
+    return _schedule_out(store.get_schedule(schedule_id))
+
+
+@router.post("/schedules/{schedule_id}/run", response_model=JobSummary,
+             status_code=202, summary="立刻跑一次（不影响下次时间）",
+             tags=["schedules"])
+def run_schedule_now(schedule_id: str, request: Request) -> JobSummary:
+    """手动触发一条调度。
+
+    刻意**不动** ``next_run_at``：这是「临时想现在看一下」的需求，
+    不该顺延正常节奏——否则周五点了下「立刻执行」，周一的定时就不跑了。
+    """
+    store: Store = request.app.state.store
+    s = store.get_schedule(schedule_id)
+    if not s:
+        raise HTTPException(404, f"调度不存在：{schedule_id}")
+    names = sched.Scheduler._names_of(s)
+    if not names:
+        raise HTTPException(409, "该调度的企业名单为空，无法执行")
+    req = {"names": names, "webhook": s.get("webhook") or None,
+           "mail_to": s.get("mail_to") or None,
+           "always_notify": bool(s.get("always_notify")),
+           "min_delay": float(s.get("min_delay") or 3.5),
+           "max_delay": float(s.get("max_delay") or 6.5),
+           "source": "schedule", "schedule_id": schedule_id,
+           "schedule_name": s.get("name") or ""}
+    job_id = store.create_job(names, req)
+    w: Worker = request.app.state.worker
+    w.submit(job_id)
+    store.set_schedule_result(schedule_id, last_job_id=job_id,
+                              last_state="queued", last_error="")
+    log.info("调度 %s 手动触发作业 %s（%d 家）", schedule_id, job_id, len(names))
+    return _to_summary(store.get_job(job_id), store)
+
+
+@router.delete("/schedules/{schedule_id}",
+               response_model=ScheduleDeleteResponse,
+               summary="删除定时巡检", tags=["schedules"])
+async def delete_schedule(schedule_id: str,
+                          request: Request) -> ScheduleDeleteResponse:
+    store: Store = request.app.state.store
+    if not store.get_schedule(schedule_id):
+        raise HTTPException(404, f"调度不存在：{schedule_id}")
+    store.delete_schedule(schedule_id)
+    log.info("调度 %s 已删除", schedule_id)
+    return ScheduleDeleteResponse(schedule_id=schedule_id)
+
+
+@router.get("/schedules/preview", response_model=SchedulePreview,
+            summary="预览改配置后的下次触发时间（不落库）",
+            tags=["schedules"])
+def preview_schedule(freq: Literal["daily", "weekly", "monthly"] = Query(...),
+                     at_time: str = Query(..., description="HH:MM"),
+                     weekday: int = Query(0, ge=0, le=6),
+                     day: int = Query(1, ge=1, le=28)) -> SchedulePreview:
+    """编辑弹窗里「下次：周三 09:30」这样的实时预览。
+
+    **刻意不落库**：用户还在填表，写库会产生一堆半成品配置；
+    而且没有预览时，用户改完保存才能看到「居然排到下个月了」。
+    """
+    if not _TIME_RE.match((at_time or "").strip()):
+        raise HTTPException(422, f"触发时刻需形如 09:30，收到 {at_time!r}")
+    try:
+        nxt = sched.compute_next(freq, at_time.strip(), weekday=weekday, day=day)
+    except ValueError as e:
+        raise HTTPException(422, str(e)) from e
+    return SchedulePreview(next_run_at=sched._iso(nxt),
+                           human=sched.describe(freq, at_time.strip(),
+                                                weekday=weekday, day=day))
 
 
 # ============================================================ 路由与前端托管

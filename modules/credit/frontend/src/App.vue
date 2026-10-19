@@ -17,6 +17,7 @@ const jobs = useJobsStore()
 const NAV = [
   { to: '/overview', label: '总览', icon: '📊' },
   { to: '/submit', label: '提交巡检', icon: '➕' },
+  { to: '/schedules', label: '定时巡检', icon: '⏰' },
   { to: '/jobs', label: '作业列表', icon: '🗂' },
 ]
 
