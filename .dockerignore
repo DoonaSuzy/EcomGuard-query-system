@@ -1,0 +1,52 @@
+# 构建上下文裁剪。
+#
+# 最要紧的一条是 vendor/：里面是 1.2 GB 的 camoufox 浏览器包，
+# 它是**运行期卷挂载**的内容（compose 里 ./vendor:/vendor:ro），
+# 一旦进了构建上下文，每次 build 都要先把它传给 daemon，
+# 白等几分钟且完全没有必要。
+vendor/
+
+# 前端依赖与产物：镜像里由阶段一重新 npm ci + build 生成。
+# 不排掉的话上下文会多出几百 MB 的 node_modules。
+**/node_modules/
+**/dist/
+**/dist-agg/
+
+# 运行期数据与日志（卷挂载，不入镜像）
+data/
+logs/
+**/*.db
+**/*.db-wal
+**/*.db-shm
+
+# Python 缓存与虚拟环境
+**/__pycache__/
+**/*.pyc
+**/*.pyo
+**/.pytest_cache/
+**/.ruff_cache/
+**/.mypy_cache/
+.venv/
+venv/
+
+# 版本控制与 CI
+.git/
+.github/
+.gitignore
+
+# 环境变量文件（含 SMTP 授权码，绝不能进镜像层）
+.env
+.env.*
+!.env.docker.example
+
+# 编辑器 / 系统
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# 文档与工具产物（镜像运行不需要）
+docs/
+*.md
+!README.md
+tools/_smoke_*.py

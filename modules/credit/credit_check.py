@@ -165,6 +165,7 @@ def _require_runtime_deps():
     """按需导入重型运行时依赖，缺失时给出可执行的补救指引。"""
     try:
         import ddddocr  # noqa: F401
+        from camoufox import DefaultAddons
         from camoufox.sync_api import Camoufox  # noqa: F401
     except ImportError as e:
         raise SystemExit(
@@ -174,13 +175,13 @@ def _require_runtime_deps():
             f"-i https://pypi.tuna.tsinghua.edu.cn/simple\n"
             f"若只跑单元测试则无需安装（pytest test_regression.py 不碰这些依赖）。"
         ) from e
-    return ddddocr, Camoufox
+    return ddddocr, Camoufox, DefaultAddons
 
 
 class CreditChecker:
     def __init__(self, headful: bool = False, min_delay: float = 3.5,
                  max_delay: float = 6.5) -> None:
-        ddddocr, _ = _require_runtime_deps()
+        ddddocr, _, _ = _require_runtime_deps()
         self.headful = headful
         self.min_delay = min_delay
         self.max_delay = max_delay
@@ -195,9 +196,35 @@ class CreditChecker:
 
     # ---------- 生命周期 ----------
     def __enter__(self) -> "CreditChecker":
-        _, Camoufox = _require_runtime_deps()
-        self._browser = Camoufox(headless=not self.headful, locale="zh-CN",
-                                 os="windows").__enter__()
+        _, Camoufox, DefaultAddons = _require_runtime_deps()
+        # os= 必须与**运行平台**一致，不能写死。
+        #
+        # 原先硬编码 os="windows"：在 Windows 开发机上跑得通，但镜像/容器是
+        # Linux，camoufox 会按 Windows 的资产名去找浏览器（camoufox.exe），
+        # 而实际装的是 camoufox-bin → 启动直接失败。这正是「能不能容器化」
+        # 的关键阻塞点之一。
+        #
+        # 这里按 sys.platform 推导，保持 Windows 行为不变（仍是 windows），
+        # Linux 上则是 linux。camoufox 只接受 "windows"/"macos"/"linux"，
+        # 且它自己内部也用同一个映射，所以这里不必再兜底。
+        _os_map = {"win32": "windows", "darwin": "macos", "linux": "linux"}
+        _os = _os_map.get(sys.platform, "linux")
+        # 必须用 exclude_addons 关掉 uBlock Origin，**不能**靠 addons=[]。
+        #
+        # 实测依据（camoufox/utils.py:456-493 + addons.py）：
+        #   if addons is None: addons = []
+        #   add_default_addons(addons, exclude_addons)   # ← 无条件执行
+        #   if addons: confirm_paths(addons)              # ← 逐个要求 manifest.json
+        # 而 maybe_download_addons 只要发现 addons/UBO **目录存在**就把路径加进
+        # 列表，不看内容是否完整。UBO 的下载地址 addons.mozilla.org 在受限网络
+        # 下返回 451，于是留下一个空目录，下次启动就抛：
+        #   InvalidAddonPath: manifest.json is missing
+        # 传 addons=[] 完全无效（它只影响自定义插件，默认插件照样加）。
+        # 营业执照巡检不需要广告拦截插件，直接排除最稳。
+        self._browser = Camoufox(
+            headless=not self.headful, locale="zh-CN", os=_os,
+            exclude_addons=[DefaultAddons.UBO],
+        ).__enter__()
         self._ctx = self._browser.new_context(no_viewport=True)
         self.page = self._ctx.new_page()
         self.page.on("response", self._on_response)

@@ -1,0 +1,167 @@
+# 聚合查询与巡检系统 —— 生产部署（GO1）
+#
+# 用法：
+#   cp .env.docker.example .env      # 填 SMTP 授权码与收件人
+#   docker compose up -d --build
+#
+# 为什么用 `.env` 而不是 `.env.docker`：compose 只对项目目录下的 `.env`
+# 做**默认**插值。用别的名字就必须给每条子命令都加 --env-file，
+# 漏一次（`docker compose ps` / `logs` / `down`）就会报
+# 「required variable MYSQL_ROOT_PASSWORD is missing」，实测踩过。
+# `.env` 已在 .gitignore 里，不会被提交。
+#
+# 设计要点（每条都有实测依据，详见 docs/UBT-docker-部署可行性.md）：
+#
+#   1) MySQL 走**独立容器**，不用宿主机 3307。宿主机那个是开发期手起的
+#      mysqld，容器化后应当自包含；DDL 由应用启动时自动建表
+#      （api.py:633 _mysql_init 执行 SCHEMA_MYSQL 三张表），
+#      所以 init 脚本只负责建库与授权，不重复建表。
+#
+#   2) credit 用 MySQL（CREDIT_DB=mysql://...），WIPO 仍走 SQLite。
+#      理由：credit 的巡检结果要长期留存、且已有 MySQL 后端实现
+#      （api.py:565 Store 双后端）；WIPO 的 check_runs 是单行状态机，
+#      迁移成本与收益不成比例，本次不动。
+#      **注意 WIPO 的 SQLite 必须由 WIPO_DATABASE__URL 显式指定**：
+#      它的默认值是「开发机本机 MySQL」，容器里不存在 → /health 恒 503。
+#
+#   3) 浏览器本体 1.3 GB 不在镜像里：camoufox fetch 走
+#      github.com/daijro/camoufox/releases，构建机网络到该域不稳
+#      （实测 Connection aborted）。改为运行时由 camoufox-init 拉一次进
+#      命名卷 —— 构建期因此零外网依赖，主机侧也可挂代理或预置文件。
+#
+#   4) AGG_WORKERS 固定 1（scheduler/worker/check_runs 都是进程内单实例）。
+#
+#   5) 收件人必须显式注入：api.py 不 load_dotenv，靠 .env 文件在容器里
+#      根本不生效，漏配就退回占位地址 业务人员@company.com，巡检白跑。
+
+name: aggregated-inspection
+
+services:
+  # ---------------------------------------------------------------- 数据库
+  mysql:
+    image: mysql:8.4
+    container_name: agg-mysql
+    restart: unless-stopped
+    command:
+      # 只保留必要项：默认配置在容器里已可用。
+      # 注意 8.4 没有 log_syslog 变量（5.7 的参数在这里会直接启动失败）。
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_0900_ai_ci
+      - --default-time-zone=+08:00
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?必须在 .env 里设置}
+      MYSQL_DATABASE: credit_check
+      TZ: Asia/Shanghai
+    volumes:
+      - mysql-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-p${MYSQL_ROOT_PASSWORD}"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    networks: [agg-net]
+
+  # ------------------------------------------------- 浏览器本体（离线安装）
+  # 目标网络（192.168.101.91）到 github.com / api.github.com **完全不通**
+  # （实测 curl 10 秒超时、0 字节），而 camoufox fetch 必须打 api.github.com
+  # 列 releases 再下 1.2 GB 资产 → 在该网络里必然失败。
+  #
+  # 所以把 1.2 GB 的浏览器包放在 ./vendor/ 下随仓库一起带过去，
+  # 由 tools/install_camoufox.py 解压进命名卷；没有预置包时才回退到 fetch。
+  # 构建期因此零外网依赖，部署期也不需要外网。
+  #
+  # 获取该 zip（在一台能上 GitHub 的机器上执行一次）：
+  #   curl -LO https://github.com/daijro/camoufox/releases/download/\
+  #     v156.0.1-beta.39/camoufox-156.0.1-beta.39-lin.x86_64.zip
+  #   mkdir -p vendor && mv camoufox-*.zip vendor/
+  # 版本号可换成任何 >= beta.19 的 release；文件名格式必须保持
+  # `camoufox-<version>-<release>-lin.x86_64.zip`，脚本靠它推导 version.json。
+  #
+  # 重跑安全：卷里已装好会直接跳过，不会重复解压 1.2 GB。
+  #
+  # ⚠️ 命令体里的 shell 变量必须写 `$$`：单个 `$` 会被 compose 当插值吃掉，
+  #    实测 `$CACHE` 被替换成空串 → `mkdir -p ""` → 容器 exit 1。
+  camoufox-init:
+    image: aggregated-inspection-app:local
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: agg-camoufox-init
+    user: root
+    entrypoint: ["/bin/sh", "-c"]
+    # 装完把属主交回 appuser：init 以 root 解压，主服务以 appuser 运行，
+    # 不 chown 的话缓存目录归 root 所有，运行期若需要写入就会 Permission denied。
+    command:
+      - python3 tools/install_camoufox.py --vendor-dir /vendor && chown -R appuser:appuser /home/appuser/.cache
+    working_dir: /app
+    volumes:
+      - camoufox-cache:/home/appuser/.cache
+      # 预置的浏览器包（只读）。没有这个目录时脚本会回退到联网 fetch。
+      - ./vendor:/vendor:ro
+    networks: [agg-net]
+
+  # ---------------------------------------------------------------- 主服务
+  app:
+    image: aggregated-inspection-app:local
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: agg-app
+    restart: unless-stopped
+    depends_on:
+      mysql:
+        condition: service_healthy
+      camoufox-init:
+        condition: service_completed_successfully
+    environment:
+      # ---- 入口与规模 ----
+      AGG_HOST: 0.0.0.0
+      AGG_PORT: "8000"
+      AGG_WORKERS: "1"
+      TZ: Asia/Shanghai
+      # ---- 前端产物（构建期已生成，路径固定）----
+      WIPO_DIST: /app/modules/wipo/web/dist-agg
+      CREDIT_DIST: /app/modules/credit/frontend/dist-agg
+      # ---- WIPO 存储：SQLite ----
+      # **必须显式设置**。WIPO 的 DatabaseSettings.url 默认值是
+      # mysql+aiomysql://root:@127.0.0.1:3306/wipo_trademark
+      # （app/core/config.py:105，为「开发机本机 MySQL」写的），
+      # 容器里 127.0.0.1 没有任何 MySQL → 每次 /health 探活都
+      # Can't connect to MySQL server on '127.0.0.1' → 整个聚合层
+      # 一直是 503（实测踩过）。这里覆盖成容器内 SQLite。
+      # 注意 4 个斜杠：sqlite+aiosqlite:////<绝对路径>。
+      WIPO_DATABASE__URL: sqlite+aiosqlite:////app/data/wipo.db
+      # ---- credit 存储：MySQL ----
+      CREDIT_DB: mysql://root:${MYSQL_ROOT_PASSWORD}@mysql:3306/credit_check?charset=utf8mb4
+      CREDIT_OUT: /app/data/results
+      # ---- 邮件推送（两级巡检）----
+      SMTP_HOST: ${SMTP_HOST:-smtp.qq.com}
+      SMTP_PORT: ${SMTP_PORT:-465}
+      SMTP_SSL: ${SMTP_SSL:-1}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASS: ${SMTP_PASS:-}
+      MAIL_TO_BUSINESS: ${MAIL_TO_BUSINESS:-}
+      MAIL_TO_MANAGER: ${MAIL_TO_MANAGER:-}
+      MAIL_FROM: ${MAIL_FROM:-}
+      # ---- 群机器人（可选）----
+      CREDIT_WEBHOOK: ${CREDIT_WEBHOOK:-}
+    ports:
+      - "${AGG_BIND:-127.0.0.1}:${AGG_PORT:-8000}:8000"
+    volumes:
+      # 浏览器本体（与 camoufox-init 共享同一个卷）
+      - camoufox-cache:/home/appuser/.cache
+      # 运行期数据：SQLite 兜底、导出 CSV、日志
+      - app-data:/app/data
+      - app-logs:/app/logs
+    networks: [agg-net]
+
+volumes:
+  mysql-data:
+  camoufox-cache:
+  app-data:
+  app-logs:
+
+networks:
+  agg-net:
+    driver: bridge

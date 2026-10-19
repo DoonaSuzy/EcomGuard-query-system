@@ -34,6 +34,12 @@ credit_result_*.csv
 .env
 .env.local
 .env.*.local
+.env.docker
+
+# 部署用的预置二进制（camoufox 浏览器包 1.2 GB）。
+# 它由 compose 以 ./vendor:/vendor:ro 挂进 camoufox-init 容器，
+# 部署时需在一台能上 GitHub 的机器上下好再拷过去，见 docker-compose.yml 注释。
+vendor/
 
 # 编辑器 / 系统
 .vscode/
