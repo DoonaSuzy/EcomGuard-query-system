@@ -41,6 +41,19 @@ from credit_check import (
 HERE = Path(__file__).resolve().parent
 
 
+def _in_git_checkout() -> bool:
+    """当前目录是否处在 git 检出内。
+
+    用途：少数断言检查的是**仓库结构**（例如 `data/.gitkeep` 占位文件必须存在），
+    这类断言在容器镜像里没有意义——镜像里 `.dockerignore` 刻意排除了 `data/`
+    （运行期走卷挂载），也没有 `.git`。
+
+    CI 与本地开发都在检出内跑，所以这些断言照常生效；
+    只有从镜像里跑 pytest 时才会跳过，不会因此漏掉真实问题。
+    """
+    return any((p / ".git").exists() for p in [HERE, *HERE.parents])
+
+
 @pytest.fixture(autouse=True)
 def _isolate_env(request, monkeypatch):
     """让所有测试都不受本机 `.env` 影响（`TestDotenv` 除外）。
@@ -654,12 +667,18 @@ class TestScriptIntegrity:
         1. `data/*` 存在——写成 `data/` 会让 git 不再进入该目录，
            后面的 `!data/.gitkeep` 例外永远不生效（实测踩过）；
         2. `!data/.gitkeep` 存在——否则新克隆没有 data/ 目录，api.py 启动时建库会多一层意外。
+
+        第 3 条断言（占位文件真实存在）只在 **git 检出**里检查：
+        容器镜像里 `data/` 是被 .dockerignore 刻意排除的（运行期走卷），
+        镜像里也没有 .git，那条断言在那里没有意义。
+        这不是放宽检查——CI 与本地都在 git 检出内跑，仍然会断言。
         """
         gi = (HERE / ".gitignore").read_text(encoding="utf-8")
         assert "data/*" in gi, (
             "必须是 data/* 而不是 data/；目录级排除会让 .gitkeep 例外失效")
         assert "!data/.gitkeep" in gi, "保留 data/ 占位，避免新克隆缺目录"
-        assert (HERE / "data" / ".gitkeep").is_file(), "占位文件必须真的存在"
+        if _in_git_checkout():
+            assert (HERE / "data" / ".gitkeep").is_file(), "占位文件必须真的存在"
 
     def test_utf8_reconfigure_present(self):
         """两个入口脚本都必须把 stdout 切 UTF-8（Windows cp936 会乱码）。"""

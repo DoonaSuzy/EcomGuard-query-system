@@ -172,11 +172,6 @@ docker compose logs app | grep -E "已挂载|调度补算"
 
 ## 6. 已知限制
 
-- **Linux 上的完整回归未跑**：Windows 侧的门禁成绩是
-  credit 254 passed、WIPO 118 passed、聚合验收 45 PASS / 0 FAIL。
-  容器起来后建议跑
-  `docker compose exec app pip install -r modules/credit/requirements-dev.txt`
-  再 `python -m pytest modules/credit/test_regression.py -q`。
 - **WIPO 仍用 SQLite**：`check_runs` 是单行状态机，迁移 MySQL 成本与收益
   不成比例，本次不动。数据落在 `app-data` 卷里。
 - **镜像体积**：含 1.3 GB Camoufox + Node 构建层，`docker images` 会看到
@@ -184,6 +179,11 @@ docker compose logs app | grep -E "已挂载|调度补算"
 - **端口只绑 127.0.0.1**：`AGG_BIND=127.0.0.1` 是默认值，
   即只能从 91 本机访问。要让局域网其他机器访问，把它改成 `0.0.0.0`
   并在 `.env.docker` 里确认——这是**刻意的保守默认**，别忘了一起改。
+- **时区要显式传**：镜像里没有 `/etc/localtime` 兜底，跑测试或手工
+  `docker run` 时要带 `-e TZ=Asia/Shanghai`。compose 已设，不受影响；
+  但**不传 TZ 跑测试会有 1 条时区断言失败**（见 §7.4）。
+- **邮箱仍是占位地址**：`.env.docker` 里是 `biz@example.com`，
+  换真实收件人之前不会真的发信（见 §8）。
 
 ## 7. 已完成的实测验证（在 192.168.101.91 上，Docker 29.8.2 / Compose v5.6.0）
 
@@ -248,11 +248,72 @@ POST /api/jobs  {"names": ["9144030071526726XG"], "mail_to": ""}
 > 注意 `notified: false` 且 `notify_error: null` —— 本次 `mail_to` 传空，
 > 属于「没让人发信」，不是发送失败。要验邮件得在 `.env.docker` 里配真 SMTP。
 
+### 7.4 Linux 侧回归（容器内跑 pytest）
+
+用镜像本身跑（镜像里已带 pytest / httpx / Pillow / aiosqlite，无需另装）：
+
+```bash
+docker run --rm -e PYTHONIOENCODING=utf-8 -e TZ=Asia/Shanghai \
+  -w /app/modules/credit aggregated-inspection-app:local \
+  python -m pytest test_regression.py -q
+# → 254 passed
+```
+
+| 模块 | 结果 | 说明 |
+|---|---|---|
+| credit `test_regression.py` | **254 passed** | 与 Windows 侧一致 |
+| WIPO `tests/` | **33 passed / 85 errors** | 85 项是 Playwright E2E，需 chromium |
+
+**为什么 WIPO 那 85 项在容器里跑不了**：镜像只装了 Camoufox 浏览器，
+没装 Playwright 的 chromium（约 150 MB）。WIPO 的运行期代码**不 import
+playwright**（`app/` 下零引用，只有 `response.py` 一句 docstring 提到），
+Playwright 只出现在 12 个测试文件里，`requirements.txt` 也没列它——
+所以这是**纯测试依赖，不影响部署**。要在容器里跑 WIPO E2E 就临时装：
+
+```bash
+docker run --rm ... -w /app/modules/wipo aggregated-inspection-app:local \
+  sh -c "playwright install --with-deps chromium && python -m pytest tests -q"
+```
+
+**跑测试必须带 `-e TZ=Asia/Shanghai`**：镜像里没有 `/etc/localtime` 兜底，
+默认 UTC 会让 `test_update_recomputes_next_run` 的
+`next_run_at.endswith("18:00:00+08:00")` 断言失败
+（实测得到 `2026-11-05T18:00:00+00:00`）。compose 已设 TZ，线上不受影响。
+
+### 7.5 顺手修掉的两个「测试依赖环境」问题
+
+跑容器回归时暴露的两处**测试自身不够健壮**，已修：
+
+| 问题 | 现象 | 修法 |
+|---|---|---|
+| 时区硬编码 | 期望 `+08:00`，UTC 环境下失败 | 记录为「必须传 TZ」，compose 已设；文档写明 |
+| `test_gitignore_excludes_api_runtime_data` 在镜像里失败 | 它断言 `data/.gitkeep` 存在，但 `.dockerignore` 刻意排除了 `data/`（运行期走卷），镜像里也没有 `.git` | 新增 `_in_git_checkout()`，该断言只在 git 检出内检查 |
+
+> 第二处**不是放宽检查**：CI 与本地都在 git 检出内跑，断言照常生效；
+> 只有从镜像里跑时才跳过。已验证本地 `_in_git_checkout() == True`。
+
+### 7.6 SMTP 出网连通性
+
+容器内 TCP 实测（不发信、不用凭据）：
+
+| 目标 | 结果 |
+|---|---|
+| `smtp.qq.com:465` | ✅ OK |
+| `smtp.qq.com:587` | ✅ OK |
+| `www.creditchina.gov.cn:443` | ✅ OK（112.84.222.65） |
+| `www.gsxt.gov.cn:443` | ✅ OK（124.238.251.173） |
+
+> 顺带一个观察：裸域 `creditchina.gov.cn` / `gsxt.gov.cn` **DNS 解析失败**
+> （`No address associated with hostname`），只有带 `www.` 的能解析。
+> 当前代码用的都是 `www.` 形式，所以不影响；但若以后有人把 URL 改成裸域，
+> 会以「DNS 失败」而不是「HTTP 错误」的形式炸，排查方向完全不同。
+
 ## 8. 尚未验证 / 下一步
 
-- **Linux 上的完整 pytest 回归**：见 §6 第一条，需在容器内装 dev 依赖后跑。
+- **邮件实际投递**：SMTP 端口连通性与 DNS 已验证（§7.6），但
+  `.env.docker` 里是 `biz@example.com` 占位地址，**从未真的发过一封信**。
+  换成真实收件人后需验一次 `notified: true`。
 - **开发机旧计划任务冲突**：见 §4，容器接管前先停掉 `CreditChina-LicenseCheck`
   （该任务指向 Windows 侧的旧仓库 `F:\projects\GO1\reverse-records\`，
   与 91 这台 Linux 机不是同一套东西，但**同一个业务时段**，会重复巡检）。
-- **邮件链路实测**：`.env.docker` 里目前是 `biz@example.com` 占位地址，
-  换成真实收件人后需再验一次 `notified: true`。
+- **WIPO E2E 在容器内**：需临时装 chromium，见 §7.4。
