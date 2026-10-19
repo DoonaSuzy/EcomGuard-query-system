@@ -45,8 +45,8 @@ docker compose logs -f app
 scheduler、worker、Camoufox 实例、`check_runs` 单行状态机全是进程内单实例。
 `docker_entrypoint.py` 会拒绝 `AGG_WORKERS>1` 启动——宁肯失败也不错乱。
 
-### 3.3 MySQL 走独立容器，不用宿主机 3307
-宿主机那个是开发期手起的 `mysqled`，容器化后应自包含。
+### 3.3 MySQL 走独立容器，不用开发机的 3307
+开发机那个 `mysqld` 是开发期手起的（端口 3307），容器化后应自包含。
 建表由应用启动时自动完成（`api.py:633 _mysql_init` 执行三张表的 DDL），
 所以 compose 里**不需要** init 脚本，只要 `MYSQL_DATABASE=credit_check`。
 
@@ -123,13 +123,20 @@ Dockerfile 的 `HEALTHCHECK` 原先探 `/api/health`，结果 WIPO 库连不上�
 接受这个代价——本系统核心价值就是那个外部接口，它不可用时「健康」是假话。
 `restart: unless-stopped` 不会因 unhealthy 重启容器，不会造成重启风暴。
 
-## 4. 与宿主机旧计划任务的冲突
+## 4. 与**开发机**旧计划任务的冲突
 
-宿主机（91）上有一个 Windows 计划任务 `CreditChina-LicenseCheck`，
-指向**旧仓库** `F:\projects\GO1\reverse-records\run_credit_check.bat`。
-容器化后必须停用它，否则每日 09:00 双跑（旧脚本 + 容器内 scheduler）。
+⚠️ 这里要分清两台机器，别搞混：
 
-在 91 上执行：
+| 机器 | 系统 | 有 `CreditChina-LicenseCheck` 吗 |
+|---|---|---|
+| **开发机**（跑 `F:\projects\GO1`） | Windows | ✅ 有，指向旧仓库 `F:\projects\GO1\reverse-records\run_credit_check.bat` |
+| **部署机 192.168.101.91** | Ubuntu 22.04 | ❌ 没有（Linux 没有 Windows 计划任务） |
+
+所以冲突只发生在「开发机上的旧脚本」与「91 容器里的 scheduler」之间：
+两者都按每日 09:00 的节奏跑同一批企业，会造成**重复巡检**
+（且旧脚本的收件人是占位地址 `业务人员@company.com`，等于白发）。
+
+容器正式接管后，在**开发机**上停掉旧任务：
 
 ```powershell
 Disable-ScheduledTask -TaskName "CreditChina-LicenseCheck"
@@ -244,7 +251,7 @@ POST /api/jobs  {"names": ["9144030071526726XG"], "mail_to": ""}
 ## 8. 尚未验证 / 下一步
 
 - **Linux 上的完整 pytest 回归**：见 §6 第一条，需在容器内装 dev 依赖后跑。
-- **宿主机旧计划任务冲突**：见 §4，部署前先停掉 `CreditChina-LicenseCheck`
+- **开发机旧计划任务冲突**：见 §4，容器接管前先停掉 `CreditChina-LicenseCheck`
   （该任务指向 Windows 侧的旧仓库 `F:\projects\GO1\reverse-records\`，
   与 91 这台 Linux 机不是同一套东西，但**同一个业务时段**，会重复巡检）。
 - **邮件链路实测**：`.env.docker` 里目前是 `biz@example.com` 占位地址，
