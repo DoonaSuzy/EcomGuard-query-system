@@ -452,7 +452,7 @@ cd modules\credit  ; python tools\run_ci_lint.py               # UTF-8 + PS1 BOM
 | `tests` | credit 201 + WIPO 契约 44 + verify 68/63（**三套分开跑**，conftest 同名冲突） | Python 3.12 / 3.13（3.11 不进：`numpy==2.5.4` 声明 `Requires-Python>=3.12`，首跑实测装不上） |
 | `e2e` | 构建两套前端产物（`build_frontends.py`，node_modules 缺失自动 `npm ci`）→ WIPO E2E 110 → 聚合验收 37（真 Chromium） | Python 3.13 |
 
-CI 与本地命令一一对应，口径见上面「质量门禁」。两个注意点：
+CI 与本地命令一一对应，口径见上面「质量门禁」。三个注意点：
 
 - **`requirements.txt` 是安装的唯一入口**：它是三模块依赖并集，版本组合已实测互容
   （含 `aiosqlite`，WIPO 的 conftest/verify 覆盖 SQLite 时需要）。
@@ -460,6 +460,13 @@ CI 与本地命令一一对应，口径见上面「质量门禁」。两个注�
   才会启动，聚合验收提交的作业允许 failed（脚本注释写明，断言只验前端链路）。
   依赖在 Linux 的可装性已核验：`ddddocr` 是 universal wheel、`onnxruntime` /
   `opencv-python` 均有 manylinux x86_64 wheel。
+- **首跑修过的四类环境差异**（都属「Windows 测不出、Linux 才暴露」）：
+  ①`tools/build_frontends.py` 有 shebang 但无可执行位 → `git update-index --chmod=+x`
+  （Windows 文件系统无执行位概念，本地永远测不出 EXE001）；②`numpy==2.5.4` 的
+  `Requires-Python>=3.12` → 矩阵去掉 3.11；③credit 托管守卫无 dist 时会误红 →
+  改显式 `xfail`（`require_dist()`）；④`healthcheck` 的 venv/deps 自检按设计会
+  在系统解释器上 FAIL → `run_checks` 支持探针注入（`venv_prefix` /
+  `venv_base_prefix` / `deps_finder`），测试注入构造环境、逻辑归逻辑。
 
 ---
 
