@@ -2,7 +2,9 @@
 
 职责只有两件：
 1. 为每个请求生成 ``request_id`` 并写入 ``contextvars``（响应体与日志都从这里取）；
-2. 回写 ``X-Request-Id`` 响应头。
+2. 回写 ``X-Request-Id`` 响应头；
+3. 把 ``request_id`` 同时写进 ``scope["state"]``，供 500 兜底 handler 使用
+   （contextvars 在异常冒到 ServerErrorMiddleware 之前已被 reset，取不到了）。
 
 为什么用**纯 ASGI 中间件**而不是 ``BaseHTTPMiddleware``？
     ``BaseHTTPMiddleware`` 会在每个请求外层再套一个 task，而
@@ -58,6 +60,15 @@ class RequestContextMiddleware:
             method=scope.get("method", ""),
         )
         token = set_context(ctx)
+
+        # 500 兜底取不到 contextvars 的原因：Starlette 把 (500, Exception)
+        # handler 交给最外层 ServerErrorMiddleware，它在本中间件之外；
+        # 等异常冒到那个 handler 时本层的 finally 已把 contextvars reset。
+        # 因此在进入内层之前把 request_id 同时写进 scope["state"] ——
+        # ServerErrorMiddleware 构造 Request 用同一个 scope，
+        # handler 里 ``request.state.request_id`` 仍能取到。
+        state = scope.setdefault("state", {})
+        state["request_id"] = request_id
 
         async def send_wrapper(message: Message) -> None:
             if message["type"] == "http.response.start":

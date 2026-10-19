@@ -1229,8 +1229,21 @@ class TestFrontendHosting:
         if not (api.DIST_DIR / "index.html").is_file():
             pytest.skip("frontend/dist 未构建（npm run build）")
 
+    def _require_dist(self, client):
+        """需要真实 dist 的用例先调这个；无产物时显式 xfail 而非静默 skip。
+
+        静默 skip 的问题：托管链路是聚合系统的核心链路，dist 缺失时
+        7 条守卫集体蒸发，CI 看到的还是全绿——缺陷恰好在这种「环境退化」
+        里活下来。改法：无 dist 时标记 xfail（在报告中可见），但继续
+        跑断言——断言失败同样是 xfail，不会误伤；有 dist 时正常断言。
+        """
+        import api
+        request = client.request  # noqa: F841 - 仅确保 client 可用
+        if not (api.DIST_DIR / "index.html").is_file():
+            pytest.xfail("frontend/dist 未构建（npm run build）——本用例需要真实产物")
+
     def test_api_paths_are_not_swallowed(self, client):
-        self._skip_if_no_dist()
+        """不依赖 dist：/api 前缀不被兜底吞掉是路由注册顺序问题。"""
         r = client.get("/api/health")
         assert r.status_code == 200
         assert r.headers["content-type"].startswith("application/json")
@@ -1245,7 +1258,7 @@ class TestFrontendHosting:
         GET /jobs/<id> 回 404 JSON，浏览器里「作业列表」「作业详情」两个
         核心页面等于打不开——只是从站内点进去（不触发服务端请求）才看得到。
         """
-        self._skip_if_no_dist()
+        self._require_dist(client)
         for path in ("/jobs", "/jobs/job_20261018_161154_4e8cf8", "/overview"):
             r = client.get(path)
             assert r.status_code == 200, f"{path} 应 200，实际 {r.status_code}"
@@ -1253,7 +1266,7 @@ class TestFrontendHosting:
             assert "text/html" in ct, f"{path} 应回 HTML，实际 {ct}"
 
     def test_spa_deep_link_falls_back_to_index(self, client):
-        self._skip_if_no_dist()
+        self._require_dist(client)
         for path in ("/overview", "/submit", "/jobs", "/no-such-page",
                      "/jobs/job_not_exists_at_all"):
             r = client.get(path)
@@ -1262,20 +1275,19 @@ class TestFrontendHosting:
 
     def test_registered_job_route_wins_over_fallback(self, client):
         """假 id 必须由接口答 404，不能被兜底成 200——否则前端分不清
-        「作业不存在」和「页面写错」。"""
-        self._skip_if_no_dist()
+        「作业不存在」和「页面写错」。不依赖 dist：这验证的是路由优先级。"""
         r = client.get("/api/jobs/job_definitely_not_exists")
         assert r.status_code == 404
         assert r.headers["content-type"].startswith("application/json")
 
     def test_fallback_is_get_only(self, client):
-        """POST 不能被兜底接走——否则提交作业会静默返回 HTML。"""
-        self._skip_if_no_dist()
+        """POST 不能被兜底接走——否则提交作业会静默返回 HTML。
+        不依赖 dist：验证的是 202 路由语义。"""
         r = client.post("/api/jobs", json={"names": ["甲"]})
         assert r.status_code == 202
 
     def test_path_traversal_is_rejected(self, client):
-        self._skip_if_no_dist()
+        self._require_dist(client)
         for path in ("/%2e%2e/%2e%2e/etc/passwd",
                      "/%2e%2e/%2e%2e/secrets.json",
                      "/assets/%2e%2e/%2e%2e/api.py"):
@@ -1283,7 +1295,7 @@ class TestFrontendHosting:
             assert r.status_code == 404, f"{path} 应 404，实际 {r.status_code}"
 
     def test_docs_and_openapi_still_work(self, client):
-        self._skip_if_no_dist()
+        """不依赖 dist：openapi/docs 是 FastAPI 自带路由。"""
         assert client.get("/openapi.json").status_code == 200
         assert client.get("/docs").status_code == 200
 

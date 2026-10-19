@@ -253,6 +253,35 @@ def test_upstream_request_id_is_reused(client):
     assert resp.json()["request_id"] == "upstream-fixed-id"
 
 
+def test_unhandled_500_keeps_request_id(client, monkeypatch):
+    """未处理异常（500）时 X-Request-Id 头与响应体 request_id 仍要一致。
+
+    根因：Starlette 把 (500, Exception) handler 交给最外层
+    ServerErrorMiddleware，等异常冒到 handler 时
+    RequestContextMiddleware 的 finally 已把 contextvars reset——
+    中间件因此在进入内层前把 request_id 同时写进 scope["state"]，
+    handler 从 ``request.state.request_id`` 取回。
+    """
+    from app.services.trademark_service import TrademarkService
+
+    def _boom(_self):
+        raise RuntimeError("探针注入的未处理异常")
+
+    # 在 service 方法上注入异常：让失败发生在 handler 调用链里
+    # （与真实 500 场景同路径），而不是 FastAPI 依赖解析期。
+    # ``raise_server_exceptions=False`` 让 500 走完整 handler 链而不是
+    # 直接抛回测试进程（默认 True 只适合「不该有 500」的用例）。
+    monkeypatch.setattr(TrademarkService, "list_all", _boom)
+    from fastapi.testclient import TestClient as _TC
+
+    with _TC(client.app, raise_server_exceptions=False) as c2:
+        resp = c2.get("/api/trademarks")
+    assert resp.status_code == 500
+    rid = resp.headers.get("x-request-id")
+    assert rid, "500 响应头缺失 X-Request-Id"
+    assert resp.json()["request_id"] == rid
+
+
 def test_reports_list(client):
     resp = client.get("/api/reports")
     assert resp.status_code == 200

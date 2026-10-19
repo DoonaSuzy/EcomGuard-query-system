@@ -36,11 +36,25 @@ log = get_logger("errors")
 
 
 def _with_request_header(payload: JSONResponse, request: Request) -> JSONResponse:
-    """把请求 id 同时写进响应头，便于前端与网关对齐日志。"""
+    """把请求 id 同时写进响应头，便于前端与网关对齐日志。
+
+    取值优先级：``request.state.request_id``（中间件在进入内层前写进
+    ``scope["state"]``）> contextvars。contextvars 在未处理异常冒到
+    ServerErrorMiddleware 之前已被中间件 finally reset，因此 500 兜底
+    只能从 ``request.state`` 取回——两者必须一致。
+    """
     request_id = getattr(request.state, "request_id", "") or get_request_id()
     if request_id:
         payload.headers[REQUEST_ID_HEADER] = request_id
     return payload
+
+
+def _request_id_for_body(request: Request) -> str:
+    """给 ``fail()`` 用的 request_id：优先 ``request.state``，回退 contextvars。
+
+    与 ``_with_request_header`` 同源取值，保证 500 响应体与响应头一致。
+    """
+    return getattr(request.state, "request_id", "") or get_request_id()
 
 
 def register_exception_handlers(app: FastAPI) -> None:
@@ -99,9 +113,17 @@ def register_exception_handlers(app: FastAPI) -> None:
 
     @app.exception_handler(Exception)
     async def _unhandled(request: Request, exc: Exception) -> JSONResponse:
-        """兜底：不回显内部细节，细节只进日志。"""
+        """兜底：不回显内部细节，细节只进日志。
+
+        ``fail(request_id=...)`` 显式传 id：此刻 contextvars 已被中间件
+        finally reset，不传的话响应体是空串，与响应头对不上。
+        """
         log.exception("未处理异常", path=request.url.path, exc_type=type(exc).__name__)
-        body = fail("服务器内部错误，请稍后重试", extra={"code": 3000})
+        body = fail(
+            "服务器内部错误，请稍后重试",
+            request_id=_request_id_for_body(request),
+            extra={"code": 3000},
+        )
         return _with_request_header(JSONResponse(status_code=500, content=body), request)
 
 
