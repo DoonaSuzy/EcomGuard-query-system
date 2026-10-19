@@ -91,7 +91,7 @@
 
 > **playwright 为什么取 1.62.0**：camoufox 对它的依赖声明是**无版本上限的裸依赖**（`requires('camoufox')` 输出 `playwright`），
 > 实测 1.62.0 下 camoufox 正常工作；而 WIPO 的 E2E 要 1.62.0。取高版本能同时满足。
-> **fastapi 为什么取 0.143.0**：credit 声明的是 0.118.3，但它的 201 项回归在 0.143.0 上全绿。
+> **fastapi 为什么取 0.143.0**：credit 声明的是 0.118.3，但它的 202 项回归在 0.143.0 上全绿。
 
 ### 前端（两套独立产物）
 
@@ -381,7 +381,7 @@ python aggregator.py
 而 lifespan 赋值的是新 app → `AttributeError: 'State' object has no attribute 'store'`。
 
 改动后 credit **独立运行行为不变**（自己的 lifespan 仍给 `credit_api.app.state` 赋值），
-它的 201 项回归全部通过。
+它的 202 项回归全部通过。
 
 ### 2. `modules/credit/frontend/src/router/index.ts`：路由 base 支持运行时覆盖
 
@@ -411,7 +411,7 @@ python tools\accept_aggregated.py
 # 2. 三个回归套件（必须分开跑，conftest 同名会冲突）
 cd modules\wipo    ; python -m pytest tests -q               # 110 项 E2E
 cd modules\wipo    ; python -m pytest tests_new -q           # 43 项契约
-cd modules\credit  ; python -m pytest test_regression.py -q   # 201 项
+cd modules\credit  ; python -m pytest test_regression.py -q   # 202 项
 
 # 3. 自建断言（不经 pytest）
 cd modules\wipo    ; python verify_fixes.py                  # 68 项
@@ -449,7 +449,7 @@ cd modules\credit  ; python tools\run_ci_lint.py               # UTF-8 + PS1 BOM
 | Job | 内容 | 矩阵 |
 |---|---|---|
 | `lint` | 聚合层 + WIPO 全源码 ruff（零容忍）；credit 测试文件 `--exit-zero` 出报告（19 项上游既有告警，只守「不再新增」） | 单版本 |
-| `tests` | credit 201 + WIPO 契约 43 + verify 68/63（**三套分开跑**，conftest 同名冲突） | Python 3.11 / 3.12 / 3.13 |
+| `tests` | credit 201 + WIPO 契约 44 + verify 68/63（**三套分开跑**，conftest 同名冲突） | Python 3.12 / 3.13（3.11 不进：`numpy==2.5.4` 声明 `Requires-Python>=3.12`，首跑实测装不上） |
 | `e2e` | 构建两套前端产物（`build_frontends.py`，node_modules 缺失自动 `npm ci`）→ WIPO E2E 110 → 聚合验收 37（真 Chromium） | Python 3.13 |
 
 CI 与本地命令一一对应，口径见上面「质量门禁」。两个注意点：
@@ -477,7 +477,7 @@ CI 与本地命令一一对应，口径见上面「质量门禁」。两个注�
 | 两套前端产物 | ✅ `dist` + `dist-agg`，构建脚本带自检 |
 | 数据库分库 | ✅ 真 MySQL 8.4.9 端到端跑通（WIPO + credit 各一库） |
 | 数据库分表 | ✅ 同库 5 表也跑通（表名零交集） |
-| credit 支持 MySQL | ✅ 同一个 `CREDIT_DB` 变量两形态，201 项回归覆盖 |
+| credit 支持 MySQL | ✅ 同一个 `CREDIT_DB` 变量两形态，202 项回归覆盖 |
 | 共用 venv | ✅ fastapi 0.143.0 + playwright 1.62.0 + camoufox 0.4.11 实测共存 |
 
 ### ⏳ 待开发

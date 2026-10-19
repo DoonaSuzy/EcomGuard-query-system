@@ -1693,27 +1693,34 @@ class TestHealthcheckAggregate:
     def test_venv_and_deps_probes_are_wired(self, tmp_path):
         """venv/deps 探针必须可注入且真被 run_checks 消费。
 
-        背景：CI runner 用系统解释器跑回归，check_venv/check_deps 按
-        设计必然 FAIL（前者判 prefix==base_prefix，后者找不到
-        camoufox）——那不是产品缺陷，是「环境归环境、逻辑归逻辑」
-        的边界。注入点若被后人删掉，这组测试会在任何机器上红，
-        而不是只在 CI 上红，容易被误判成「CI 环境问题」绕过。
+        背景：CI runner 用系统解释器跑回归，check_venv 按设计必 FAIL
+        （prefix==base_prefix）——那不是产品缺陷，是「环境归环境、
+        逻辑归逻辑」的边界。注入点若被后人删掉，这组测试会在任何
+        机器上红，而不是只在 CI 上红，容易被误判成「CI 环境问题」绕过。
+
+        deps 侧不能拿「系统解释器必缺 camoufox」当反证前提：CI 的
+        tests job 本来就 pip install 了全部依赖，那台机器上 deps
+        是齐的（ef31017 首跑实测翻车）。所以 deps 反证用注入
+        「永远返回 None 的 finder」构造，任何环境都成立。
         """
         import healthcheck as hc
         names = tmp_path / "c.txt"
         names.write_text("A有限公司\n", encoding="utf-8")
-        # 不注入 venv/deps 探针：在系统解释器下 venv/deps 必 FAIL，
-        # 借此反证注入点确实参与了判定（有注入时是 OK 的）。
+        # venv 反证：系统解释器下不注入 venv 探针必 FAIL。
         probes = self._probes(tmp_path)
         probes.pop("venv_prefix"); probes.pop("venv_base_prefix")
-        probes.pop("deps_finder")
         if sys.prefix == getattr(sys, "base_prefix", sys.prefix):
             results = hc.run_checks(env=self._env(), companies=names,
                                     probes=probes)
             by_id = {r.id: r for r in results}
             assert not by_id["venv"].ok, "系统解释器下 venv 项应 FAIL（注入点存在性的反证）"
-            assert not by_id["deps"].ok, "缺 camoufox 时 deps 项应 FAIL"
-        # 注入后必须全绿——这半边在 venv/系统解释器下都成立。
+        # deps 反证：注入空 finder（任何模块都找不到），deps 必 FAIL。
+        probes = self._probes(tmp_path, deps_finder=lambda mod: None)
+        results = hc.run_checks(env=self._env(), companies=names,
+                                probes=probes)
+        by_id = {r.id: r for r in results}
+        assert not by_id["deps"].ok, "注入空 finder 后 deps 项应 FAIL"
+        # 注入全绿探针后必须全绿——这在任何解释器下都成立。
         results = hc.run_checks(env=self._env(), companies=names,
                                 probes=self._probes(tmp_path))
         failed = [r.id for r in results if not r.ok]
