@@ -3,7 +3,7 @@
 > 把两个原本独立部署的系统合成**一个服务入口**：一份 OpenAPI、一个进程、两个功能模块。
 > 页面按子路径切换（`/wipo/`、`/credit/`），数据层各模块可独立选后端。
 
-[![tests](https://img.shields.io/badge/tests-354%20passed-brightgreen)](#-开发)
+[![tests](https://img.shields.io/badge/tests-364%20passed-brightgreen)](#-开发)
 [![CI](https://github.com/DoonaSuzy/Aggregated-query-and-inspection-system/actions/workflows/ci.yml/badge.svg)](https://github.com/DoonaSuzy/Aggregated-query-and-inspection-system/actions/workflows/ci.yml)
 [![python](https://img.shields.io/badge/python-%3E%3D3.11-blue)](https://www.python.org/)
 [![api](https://img.shields.io/badge/API-16%20paths%20%2F%2020%20ops-informational)](#-统一接口)
@@ -26,9 +26,9 @@
 |---|---:|
 | Python 代码 | **14,634 非空行**（75 文件，口径见下注） |
 | 前端源码 | **4,683 非空行**（38 文件，含 1 个生成物） |
-| 自动化测试 | **354 项**（201 + 43 + 110，口径见下注） |
+| 自动化测试 | **364 项**（202 + 44 + 118，口径见下注） |
 | 自建断言脚本 | **131 项**（68 + 63） |
-| 聚合层端到端 | **37 项**（真 Chromium，全程 0 个 4xx/5xx） |
+| 聚合层端到端 | **41 项**（真 Chromium，全程 0 个 4xx/5xx） |
 | 统一 API | **16 条唯一路径 / 20 个 operation**（零冲突） |
 | 数据库表 | **5 张**（`trademarks` / `reports` / `check_runs` / `jobs` / `results`） |
 | 前端产物 | **4 套**（每模块 2 套：独立运行 + 子路径托管） |
@@ -42,7 +42,7 @@
 
 > **测试口径**（可复现）：三个套件**必须分开跑**，两个 `conftest.py` 同名会冲突
 > （`pytest tests tests_new` 报 `ImportError: cannot import name 'FAKE_REPORT' from 'conftest'`）。
-> `modules/credit/test_regression.py` **201** + `modules/wipo/tests_new` **43** + `modules/wipo/tests` **110** = **354**。
+> `modules/credit/test_regression.py` **202** + `modules/wipo/tests_new` **44** + `modules/wipo/tests` **118** = **364**。
 > 复现：`python -m pytest <路径> -q`（`-q` 的 summary 行能拿到计数，无需 junitxml）。
 > 另有两套不经 pytest 的断言：`verify_fixes.py` 输出「合计 68 项断言，通过 68，失败 0」，
 > `verify_new_stack.py` 输出「结果: 63 通过, 0 失败」。
@@ -173,7 +173,7 @@ aggregated-system/
 ├── requirements.txt           两模块运行依赖的并集（58 项，57 项 `==` 锁定）
 ├── tools/
 │   ├── build_frontends.py     构建两套前端产物（dist + dist-agg），带自检
-│   └── accept_aggregated.py   端到端验收（起 uvicorn + 真 Chromium，37 项断言）
+│   └── accept_aggregated.py   端到端验收（起 uvicorn + 真 Chromium，41 项断言）
 ├── docs/
 │   └── 单前端双后端整合评估.md   合并方案的设计依据（三形态实测、改造清单、风险）
 └── modules/
@@ -405,12 +405,12 @@ WIPO 前端**零改动**：它没有 vue-router，四个 section 靠 `.page.acti
 ### 质量门禁
 
 ```powershell
-# 1. 聚合层端到端（起 uvicorn + 真实 Chromium，37 项断言）
+# 1. 聚合层端到端（起 uvicorn + 真实 Chromium，41 项断言）
 python tools\accept_aggregated.py
 
 # 2. 三个回归套件（必须分开跑，conftest 同名会冲突）
-cd modules\wipo    ; python -m pytest tests -q               # 110 项 E2E
-cd modules\wipo    ; python -m pytest tests_new -q           # 43 项契约
+cd modules\wipo    ; python -m pytest tests -q               # 118 项 E2E
+cd modules\wipo    ; python -m pytest tests_new -q           # 44 项契约
 cd modules\credit  ; python -m pytest test_regression.py -q   # 202 项
 
 # 3. 自建断言（不经 pytest）
@@ -449,8 +449,8 @@ cd modules\credit  ; python tools\run_ci_lint.py               # UTF-8 + PS1 BOM
 | Job | 内容 | 矩阵 |
 |---|---|---|
 | `lint` | 聚合层 + WIPO 全源码 ruff（零容忍）；credit 测试文件 `--exit-zero` 出报告（19 项上游既有告警，只守「不再新增」） | 单版本 |
-| `tests` | credit 201 + WIPO 契约 44 + verify 68/63（**三套分开跑**，conftest 同名冲突） | Python 3.12 / 3.13（3.11 不进：`numpy==2.5.4` 声明 `Requires-Python>=3.12`，首跑实测装不上） |
-| `e2e` | 构建两套前端产物（`build_frontends.py`，node_modules 缺失自动 `npm ci`）→ WIPO E2E 110 → 聚合验收 37（真 Chromium） | Python 3.13 |
+| `tests` | credit 202 + WIPO 契约 44 + verify 68/63（**三套分开跑**，conftest 同名冲突） | Python 3.12 / 3.13（3.11 不进：`numpy==2.5.4` 声明 `Requires-Python>=3.12`，首跑实测装不上） |
+| `e2e` | 构建两套前端产物（`build_frontends.py`，node_modules 缺失自动 `npm ci`）→ WIPO E2E 118 → 聚合验收 41（真 Chromium） | Python 3.13 |
 
 CI 与本地命令一一对应，口径见上面「质量门禁」。三个注意点：
 

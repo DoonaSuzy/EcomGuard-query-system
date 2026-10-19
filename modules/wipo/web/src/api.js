@@ -97,11 +97,26 @@ export function importFile(file) {
 }
 
 /**
- * 导出：直接触发浏览器下载。
+ * 导出：拉取接口字节流，再以 Blob 触发下载。
  *
- * 这个接口返回的是文件（json/csv）而不是外壳，所以不能用 fetch。
- * 旧版也是 `window.location.href = ...`，沿用即可。
+ * **不能再用 `window.location.href = ...`**（旧版与首版 Vue 都是这么写的）：
+ * 那等于让浏览器**导航**过去，`format=json` 时后端返回 `application/json`
+ * （没有 `Content-Disposition`，不是附件），浏览器会把整个页面替换成一段
+ * 裸 JSON 文本 —— 用户点一下「导出 JSON」，应用界面就没了，得手动回退。
+ * 只有 `format=csv` 因为带了 `attachment` 头才表现为下载。
+ *
+ * 用 fetch 还顺带解决两件事：
+ * 1. 在聚合系统的 iframe 里同样有效（不改宿主页地址）；
+ * 2. 按钮可以显示「导出中…」并捕获失败，而不是静默跳走。
+ *
+ * 字节原样转发（含 CSV 的 BOM 与 CRLF），不在前端重排——`test_export_csv`
+ * 断言的是服务端产物的逐字节内容。
  */
-export function exportDataUrl(format) {
-  window.location.href = `${API_BASE}/export?format=${format}`
+export async function exportTrademarks(format) {
+  const response = await fetch(`${API_BASE}/export?format=${format}`)
+  if (!response.ok) {
+    throw new Error(`导出失败：HTTP ${response.status}`)
+  }
+  const blob = await response.blob()
+  return { blob, filename: format === 'csv' ? 'trademarks.csv' : 'trademarks.json' }
 }

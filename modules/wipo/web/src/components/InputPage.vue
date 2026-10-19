@@ -1,8 +1,9 @@
 <script setup>
 import { ref, reactive, computed } from 'vue'
-import { createTrademark, updateTrademark, importFile, exportDataUrl } from '../api'
+import { createTrademark, updateTrademark, importFile, exportTrademarks } from '../api'
 import { useStore, setEditingId } from '../store'
 import { parseNiceClass, joinNiceClass } from '../utils'
+import { downloadBlob } from '../download'
 import { showToast } from '../toast'
 import { loadTrademarks } from '../actions'
 
@@ -37,6 +38,8 @@ const fieldError = ref('')
 const submitting = ref(false)
 const importStatus = ref('')
 const fileInput = ref(null)
+//: 正在导出的格式（'' / 'json' / 'csv'），用于禁用按钮并显示进度
+const exporting = ref('')
 
 const charCount = computed(() => `${form.brandName.length}/200`)
 const isEditing = computed(() => state.editingId !== null)
@@ -175,8 +178,25 @@ function triggerImport() {
   fileInput.value.click()
 }
 
-function exportData(format) {
-  exportDataUrl(format)
+/**
+ * 导出商标数据。
+ *
+ * 先把字节拉下来再用 Blob 落盘，不直接把 `location.href` 指过去 ——
+ * 后者在 `format=json` 时会把整个页面导航成裸 JSON（后端那个分支没有
+ * `Content-Disposition: attachment`），用户点一下就"离开"了应用。
+ * 详见 `api.js` 的 `exportTrademarks` 注释。
+ */
+async function exportData(format) {
+  if (exporting.value) return
+  exporting.value = format
+  try {
+    const { blob, filename } = await exportTrademarks(format)
+    downloadBlob(filename, blob)
+  } catch (e) {
+    showToast('导出失败', e.message || '请稍后重试', 'error')
+  } finally {
+    exporting.value = ''
+  }
 }
 
 // 供 App.vue 通过模板 ref 调用（清单页点「编辑」时）
@@ -333,11 +353,21 @@ defineExpose({ startEdit })
         <span class="import-status" id="import-status">{{ importStatus }}</span>
       </div>
       <div class="export-area">
-        <button class="btn btn-outline" id="btn-export-json" @click="exportData('json')">
-          导出 JSON
+        <button
+          class="btn btn-outline"
+          id="btn-export-json"
+          :disabled="!!exporting"
+          @click="exportData('json')"
+        >
+          {{ exporting === 'json' ? '导出中…' : '导出 JSON' }}
         </button>
-        <button class="btn btn-outline" id="btn-export-csv" @click="exportData('csv')">
-          导出 CSV
+        <button
+          class="btn btn-outline"
+          id="btn-export-csv"
+          :disabled="!!exporting"
+          @click="exportData('csv')"
+        >
+          {{ exporting === 'csv' ? '导出中…' : '导出 CSV' }}
         </button>
       </div>
     </div>
