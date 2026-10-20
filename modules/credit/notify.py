@@ -111,6 +111,36 @@ def load_rows(path: Path) -> list[dict]:
         return list(csv.DictReader(f))
 
 
+#: 全部主体清单的排序权重：异常 → 未收录 → 待复核 → 正常。
+#: 同级之间保持输入顺序（sorted 是稳定排序），不额外引入随机性。
+VERDICT_ORDER = {"alert": 0, "notfound": 1, "unknown": 2, "ok": 3}
+
+
+def _roster_table(rows: list[dict]) -> list[str]:
+    """全部主体清单：每一家都列出名称、信用代码、登记状态与判定。
+
+    为什么必须**始终**输出（而不是只在异常时出表）：
+    早先的正文仅在「确定异常」时生成表格，全部正常时只写一句「本期无异常主体」，
+    收件人因此看不到到底查了哪几家、每家的状态是什么——「邮件里没有企业名称」
+    就是这么来的。异常与待复核排在最前，保证一眼能扫到要处理的对象。
+    """
+    ordered = sorted(rows, key=lambda r: VERDICT_ORDER.get(r.get("判定", ""), 9))
+    out = [
+        "**全部主体清单**（异常与待复核排在前）", "",
+        "| 企业名称 | 统一社会信用代码 | 登记状态 | 判定 | 备注 |",
+        "| --- | --- | --- | --- | --- |",
+    ]
+    for r in ordered:
+        name = r.get("匹配名称") or r.get("输入名称") or "-"
+        code = r.get("统一社会信用代码") or "-"
+        st = r.get("登记状态") or "-"
+        verdict = VERDICT_CN.get(r.get("判定", ""), "?")
+        note = (r.get("备注") or "").strip() or "-"
+        out.append(f"| {name} | {code} | {st} | {verdict} | {note} |")
+    out.append("")
+    return out
+
+
 def build_report(rows: list[dict],
                  health: dict | None = None) -> tuple[str, str, list[dict]]:
     """返回 (标题, Markdown 正文, 需提醒行)。
@@ -161,6 +191,7 @@ def build_report(rows: list[dict],
             note = r.get("备注") or "状态为空"
             lines.append(f"- {r.get('输入名称')}：{note}")
         lines.append("")
+    lines += _roster_table(rows)
     md = "\n".join(lines)
     if health:
         md = append_health_section(md, health)

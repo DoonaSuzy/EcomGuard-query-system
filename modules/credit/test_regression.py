@@ -27,6 +27,7 @@ from pathlib import Path
 
 import logkit
 import pytest
+import roster
 from credit_check import (
     ALERT,
     NORMAL,
@@ -295,10 +296,70 @@ class TestNotifyReport:
         from notify import build_report
         _, md, _ = build_report(self._rows(["alert", "unknown"]))
         assert "需关注主体" in md and "需人工复核" in md
-        # 异常表里只能有 1 行（alert），unknown 不该进表
-        table_rows = [ln for ln in md.splitlines()
+        # 异常表里只能有 1 行（alert），unknown 不该进表。
+        # 注意必须限定在「需关注主体」段内：后面还有一张「全部主体清单」
+        # （每一家都列），不限范围会把清单里的行算进来。
+        seg = md.split("**需关注主体**", 1)[1].split("**需人工复核**", 1)[0]
+        table_rows = [ln for ln in seg.splitlines()
                       if ln.startswith("| 公司") or ln.startswith("| 甲")]
         assert len(table_rows) == 1, f"异常表应只有 alert 一行，实际 {table_rows}"
+
+    # ---- 全部主体清单（「邮件里看不到企业名称」的回归） ----
+    def test_roster_listed_even_when_all_ok(self):
+        """全部正常也必须列出每一家，不能只写一句「本期无异常主体」。
+
+        这是用户实测反馈的缺陷：正文只在异常时出表，正常时收件人看不到
+        查了哪几家、各自状态是什么。
+        """
+        from notify import build_report
+        _, md, _ = build_report(self._rows(["ok", "ok"]))
+        assert "全部主体清单" in md
+        assert "| 公司0 |" in md and "| 公司1 |" in md
+
+    def test_roster_has_every_input_row(self):
+        """清单数据行数必须等于输入行数，一行都不能丢。"""
+        from notify import build_report
+        rows = self._rows(["ok", "alert", "notfound", "unknown", "ok"])
+        _, md, _ = build_report(rows)
+        seg = md.split("**全部主体清单**", 1)[1]
+        data = [ln for ln in seg.splitlines()
+                if ln.startswith("| 公司") or ln.startswith("| 甲")]
+        assert len(data) == 5, f"清单应含 5 家，实际 {len(data)}：{data}"
+
+    def test_roster_sorts_abnormal_before_normal(self):
+        """异常与待复核排在前，正常排在后（同级保持输入顺序）。"""
+        from notify import build_report
+        _, md, _ = build_report(self._rows(["ok", "alert", "notfound", "unknown"]))
+        seg = md.split("**全部主体清单**", 1)[1]
+        data = [ln for ln in seg.splitlines()
+                if ln.startswith("| 公司") or ln.startswith("| 甲")]
+        # 输入顺序 公司0=ok 公司1=alert 公司2=notfound 公司3=unknown
+        assert data[0].startswith("| 公司1 |")   # alert
+        assert data[1].startswith("| 公司2 |")   # notfound
+        assert data[2].startswith("| 公司3 |")   # unknown
+        assert data[3].startswith("| 公司0 |")   # ok
+
+    def test_roster_carries_code_status_and_note(self):
+        """未收录行没有代码/状态，但不能没有备注说明。"""
+        from notify import build_report
+        rows = self._rows(["notfound"])
+        rows[0]["备注"] = "信用中国未收录（疑似已注销/吊销）"
+        _, md, _ = build_report(rows)
+        assert "疑似已注销" in md
+        # 未收录行用 "-" 占位，不允许出现空列。
+        # 只取清单段内的行：需关注表是 4 列，清单表才是这里要验的 5 列。
+        seg = md.split("**全部主体清单**", 1)[1]
+        body = [ln for ln in seg.splitlines() if ln.startswith("| 公司")][0]
+        assert body.count("|") == 6, f"五列表格应有 6 个分隔符：{body}"
+
+    def test_roster_survives_html_rendering(self):
+        """转 HTML 后每一家名称都还在（表格渲染不能吃行）。"""
+        from notify import build_report, md_to_html
+        _, md, _ = build_report(self._rows(["ok", "alert", "notfound"]))
+        html = md_to_html(md)
+        for i in range(3):
+            assert f"公司{i}" in html
+        assert "未收录" in html
 
 
 class TestExitCodes:
@@ -2331,8 +2392,16 @@ class TestSchedulerTick:
 
     @staticmethod
     def _at(h, m=0):
+        """今天 h:m 的本地时间。
+
+        原来是写死的 ``datetime(2026, 10, 19, h, m)``：那一天恰好是这些测试
+        写成的日子，所以能过；过了午夜就变成「注入一个过去了 n 天的 now」，
+        ``last_run_at`` 与按那个 now 正推的 ``next_run_at`` 会跨天错位。
+        改成相对今天，测试在任何日期跑都表达同一个意图。
+        """
         from datetime import datetime
-        return datetime(2026, 10, 19, h, m).astimezone()
+        return datetime.now().astimezone().replace(hour=h, minute=m, second=0,
+                                                  microsecond=0)
 
     def _mk(self, api, sched, store, at_time, next_at):
         return store.add_schedule({
@@ -3011,3 +3080,39 @@ class TestScheduleResultSync:
         first = client.app.state.store.get_schedule(sid)["next_run_at"]
         client.post(f"/api/schedules/{sid}/run")
         assert client.app.state.store.get_schedule(sid)["next_run_at"] == first
+
+
+class TestRoster:
+    """巡检名单文件的结构契约（巡检名单.json + roster.py）。"""
+
+    def test_roster_file_has_at_least_fifty_entries(self):
+        """需求口径：名单「起码 50 家」。少于 50 直接失败，防止误删。"""
+        names = roster.load_roster()
+        assert len(names) >= 50, f"名单只有 {len(names)} 家，少于承诺的 50"
+
+    def test_roster_entries_are_non_empty_and_unique(self):
+        names = roster.load_roster()
+        assert all(isinstance(n, str) and n.strip() for n in names)
+        assert len(set(names)) == len(names), "名单里有重复条目"
+
+    def test_roster_entries_are_name_or_credit_code(self):
+        """每条要么是 18 位统一社会信用代码，要么是企业全称，不能是空壳。"""
+        names = roster.load_roster()
+        for n in names:
+            is_code = bool(re.fullmatch(r"[0-9A-Z]{18}", n))
+            is_name = not n.startswith("#")
+            assert is_code or is_name, f"无法识别的条目：{n!r}"
+
+    def test_roster_has_deregistered_entries_without_code(self):
+        """必须有没有信用代码的全称条目——已注销主体查不到代码，
+        这正是要人看一眼的信号；全用代码就无法表达这类主体。"""
+        names = roster.load_roster()
+        plain = [n for n in names if not re.fullmatch(r"[0-9A-Z]{18}", n)]
+        assert plain, "名单里没有任何全称条目，已注销/吊销主体会消失"
+
+    def test_roster_survives_schedule_validation(self, client):
+        """整份名单必须能通过 ScheduleIn 的 names 校验（否则调度建不出来）。"""
+        from api import ScheduleIn
+        out = ScheduleIn(name="名单自检", freq="daily", at_time="09:00",
+                         names=roster.load_roster())
+        assert len(out.names) == len(roster.load_roster())

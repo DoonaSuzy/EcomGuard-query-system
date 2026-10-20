@@ -257,7 +257,7 @@ class Scheduler:
             nxt = compute_next(s["freq"], s["at_time"],
                                weekday=s.get("weekday") or 0,
                                day=s.get("day") or 1, base=now)
-            self.store.set_schedule_next_run(sid, _iso(nxt))
+            self.store.set_schedule_next_run(sid, _iso(nxt), now=now)
             log.info("调度 %s 缺少 next_run_at，已补算为 %s", sid, _iso(nxt))
             return False
 
@@ -274,7 +274,8 @@ class Scheduler:
             # 只补这一次，不追历史：连落后 10 天也只跑 1 次。
             log.warning("调度 %s 原定 %s 已错过 %.0f 分钟，补跑一次",
                         sid, s.get("next_run_at"), lag / 60)
-        self.store.set_schedule_next_run(sid, _iso(nxt), advance_marker=True)
+        self.store.set_schedule_next_run(sid, _iso(nxt), advance_marker=True,
+                                         now=now)
 
         names = self._names_of(s)
         if not names:

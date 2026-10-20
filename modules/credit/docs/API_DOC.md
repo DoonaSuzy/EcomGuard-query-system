@@ -290,8 +290,14 @@ log_path(name: str, log_dir: Path | None = None) -> Path   # logkit.py:88
 | `at_time` | `str` | 必填 | `HH:MM`（24 小时制，`^([01]\d|2[0-3]):[0-5]\d$`），`9:00` 这种 → 422 |
 | `weekday` | `int` | `0` | `weekly` 用；**0=周一 … 6=周日** |
 | `day` | `int` | `1` | `monthly` 用；**1–28** |
-| `names` | `list[str]` | 必填 | 同 `POST /api/jobs`，1–200 条 |
+| `names` | `list[str]` | 必填 | 同 `POST /api/jobs`：企业全称**或 18 位统一社会信用代码**，1–200 条 |
 | `webhook` / `mail_to` / `always_notify` / `min_delay` / `max_delay` | — | — | 同 `POST /api/jobs`，触发时原样透传 |
+
+**推荐用信用代码而不是全称**：实测「北京字节跳动科技有限公司」按名称查只会得到
+候选「跳动字节科技(北京)有限公司」（判定 unknown）；统一社会信用代码是精确键，
+命中即 1 条记录。已注销/吊销的主体在信用中国查不到代码，只能留全称——
+这类条目巡检结果是 notfound，正是要人看一眼的信号。开箱可用的名单见
+`modules/credit/巡检名单.json`（63 家，含 5 家已注销样本）。
 
 **`day` 上限为什么是 28 而不是 31**：「每月 31 号」在 2/4/6/9/11 月不存在，
 顺延到月末还是跳过都有坑；限 28 后每个月都有这一天，行为零歧义。真要月末跑用 `weekly` 或 `daily`。

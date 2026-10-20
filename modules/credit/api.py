@@ -874,19 +874,27 @@ class Store:
                           (schedule_id,))
 
     def set_schedule_next_run(self, schedule_id: str, next_run_at: str,
-                              advance_marker: bool = False) -> None:
+                               advance_marker: bool = False,
+                               now: datetime | None = None) -> None:
         """推进 next_run_at。
 
         ``advance_marker=True`` 时同时写 last_run_at=now——这一对写入必须原子，
         否则「已推进但没记运行时间」会让补跑判断（compare last_run_at）失真。
+
+        ``now`` 必须由调用方显式传入（Scheduler.tick 用的那个时间）。这里不能
+        自己再取一次 ``_now()``：一旦两个时间源不一致（测试注入过去时间、或进程
+        内时钟被校正），``next_run_at`` 是按传入 now 正推的、``last_run_at`` 却是
+        真实时间，就会出现 next_run_at 早于 last_run_at 的诡异状态。
         """
+        marker = now or datetime.now(timezone.utc).astimezone()
+        marker_s = marker.astimezone().isoformat(timespec="seconds")
         if advance_marker:
             sql = ("UPDATE schedules SET next_run_at=?, last_run_at=?, updated_at=? "
                    "WHERE schedule_id=?")
-            params: tuple = (next_run_at, _now(), _now(), schedule_id)
+            params: tuple = (next_run_at, marker_s, marker_s, schedule_id)
         else:
             sql = "UPDATE schedules SET next_run_at=?, updated_at=? WHERE schedule_id=?"
-            params = (next_run_at, _now(), schedule_id)
+            params = (next_run_at, marker_s, schedule_id)
         with self._conn() as c:
             self._execute(c, sql, params)
 
