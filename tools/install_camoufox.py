@@ -2,7 +2,7 @@
 """离线安装 Camoufox 浏览器本体。
 
 为什么需要这个脚本（而不是直接用 `python -m camoufox fetch`）：
-    目标机器（192.168.101.91）到 github.com / api.github.com 完全不通
+    部分内网/离线目标机到 github.com / api.github.com 完全不通
     （实测 curl 10 秒超时、0 字节）。而 camoufox fetch 的流程是
     「打 api.github.com 列 releases → 下 1.2 GB 资产 → 解压」，
     在这个网络里必然失败，且失败得很慢（每次都要等超时）。

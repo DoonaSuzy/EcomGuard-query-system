@@ -30,6 +30,14 @@ logs/
 result_*.csv
 credit_result_*.csv
 
+# 设计文档与部署手册：只存在本地，不入库（含真实 IP、邮箱、企业名单实测记录）
+# 唯一例外是 docs/screenshots/ 下的界面截图（公开版 README 用）：
+# 每张都做过敏感信息检查，IP/邮箱/手机号均已打码，无真实业务数据。
+docs/*
+!docs/screenshots/
+docs/screenshots/*
+!docs/screenshots/*.png
+
 # 环境变量（含 SMTP 授权码、收件人）
 .env
 .env.local

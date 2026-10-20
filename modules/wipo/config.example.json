@@ -1,9 +1,9 @@
 {
+  "_comment": "配置文件模板。复制为 config.json 后填入真实值；config.json 已被 .gitignore 排除，切勿提交。",
   "_comment_notification": "通知服务配置 - 配置告警信息的发送渠道",
   "notification": {
-    "channels": [
-      "email"
-    ],
+    "_comment_channels": "通知渠道白名单：可选 email / dingtalk / wework。置空数组表示全部关闭（send_alerts() 不向任何渠道发送）。",
+    "channels": [],
     "email": {
       "smtp_server": "smtp.example.com",
       "smtp_port": 587,
@@ -11,8 +11,8 @@
       "recipients": [
         "admin@example.com"
       ],
-      "username": "",
-      "password": ""
+      "username": "monitor@example.com",
+      "password": "在此填入 SMTP 授权码（QQ 邮箱需开启 POP3/SMTP 后发短信获取 16 位授权码，不是登录密码）"
     },
     "dingtalk": {
       "webhook_url": ""
@@ -29,7 +29,7 @@
       "sender": "发件人邮箱地址",
       "recipients": "收件人邮箱地址数组，支持多个",
       "username": "SMTP 登录用户名（通常为邮箱地址）",
-      "password": "SMTP 登录密码或授权码（注意保密）"
+      "password": "SMTP 登录密码或授权码（注意保密，切勿提交）"
     },
     "dingtalk": {
       "webhook_url": "钉钉机器人 Webhook 地址，在钉钉群设置中获取"

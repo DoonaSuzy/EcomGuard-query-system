@@ -63,7 +63,7 @@ services:
     networks: [agg-net]
 
   # ------------------------------------------------- 浏览器本体（离线安装）
-  # 目标网络（192.168.101.91）到 github.com / api.github.com **完全不通**
+  # 部分内网目标机到 github.com / api.github.com **完全不通**
   # （实测 curl 10 秒超时、0 字节），而 camoufox fetch 必须打 api.github.com
   # 列 releases 再下 1.2 GB 资产 → 在该网络里必然失败。
   #

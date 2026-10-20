@@ -46,3 +46,6 @@ frontend/*.tsbuildinfo
 
 # 凭据（webhook key / SMTP 密码不要入库）
 .env
+
+# 第三方风控系统逆向分析报告：含完整绕过思路与技术底牌，只保留本地
+瑞数逆向分析技术报告.md

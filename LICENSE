@@ -1,0 +1,38 @@
+Custom Demo License / 演示版许可协议
+
+Copyright (c) 2026 DoonaSuzy. All rights reserved.
+
+1. Scope of grant / 授权范围
+   Permission is granted, free of charge, to any person obtaining a copy of
+   this repository (the "Software") to use, view and run the Software solely
+   for personal study, research, and internal non-production demonstration
+   purposes (the "Permitted Uses").
+
+2. Restrictions / 限制
+   You may NOT:
+   (a) use the Software or any substantial part of it for commercial
+       purposes, or in a product or service offered to third parties;
+   (b) redistribute, re-host, or sublicense the Software or derivative
+       works of a substantial part of it;
+   (c) remove or obscure this license notice or the copyright statement;
+   (d) present the Software, or any substantial derivative of it, as your
+       own work in a portfolio, publication, or product.
+
+3. Modules with their own license / 已单独声明的模块
+   The modules under modules/wipo/ remain under their own MIT license as
+   declared in modules/wipo/LICENSE. This notice does not override it.
+
+4. Warranty / 免责声明
+   THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+   OR IMPLIED. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY CLAIM,
+   DAMAGES OR OTHER LIABILITY ARISING FROM THE USE OF THE SOFTWARE.
+
+5. Questions / 商业授权
+   For commercial licensing inquiries, open an issue in this repository.
+
+ ------------------------------------------------------------------------------
+ 中文摘要（非正式翻译，以英文原文为准）
+
+ 仅授权个人学习、研究与内部非生产演示；禁止商业使用、二次分发、移除版权
+ 声明、或将本软件及其衍生作品作为自己的作品发布。modules/wipo/ 仍按其自带的
+ MIT 许可执行。商用授权请通过 Issue 联系。
