@@ -105,11 +105,21 @@ jobs:
         run: python -m playwright install --with-deps chromium
       # 统一前端是独立 TS 工程，vue-tsc 能抓到「模板里引用了不存在的属性」这类
       # 构建期不一定报错、但运行期白屏的问题。单独一步，失败时比 E2E 全红好定位。
+      #
+      # 为什么要把三个目录的依赖都装上：web/ 的 tsconfig 通过别名（@ → credit、
+      # @wipo → wipo）把两个模块的源码也纳入类型检查。TypeScript 解析裸导入
+      # （vue / vue-router / pinia / @vueuse/core）是**从引用方所在目录往上找**
+      # node_modules，所以只装 web/ 的依赖时，credit 与 wipo 的 .vue 会报
+      # TS2307 Cannot find module 'vue'。本地因为三个目录都装过，永远测不出来。
+      - name: 安装三套前端依赖（web + 两个模块）
+        run: |
+          for d in web modules/wipo/web modules/credit/frontend; do
+            echo "== npm ci in $d =="
+            (cd "$d" && npm ci --no-audit --no-fund)
+          done
       - name: 统一前端类型检查（web/）
         working-directory: web
-        run: |
-          npm ci --no-audit --no-fund
-          npm run typecheck
+        run: npm run typecheck
       - name: 构建三套前端产物（web/dist + 每模块 dist/dist-agg）
         run: python tools/build_frontends.py
       - name: WIPO E2E（118，打默认 base 的 dist/）
