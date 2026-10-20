@@ -33,11 +33,16 @@ jobs:
       # 聚合层 + WIPO 全部源码与测试：零容忍（本仓现状全绿）
       - name: ruff check（聚合层 + WIPO，零容忍）
         run: python -m ruff check aggregator.py credit_api_glue.py tools modules/wipo/app modules/wipo/tests modules/wipo/tests_new modules/wipo/cli.py modules/wipo/verify_fixes.py modules/wipo/verify_new_stack.py
-      # credit 测试文件存在 19 项上游既有 lint error（modules/credit 从原仓
-      # 平移进来时就带），本轮 CI 先只守「不再新增」：--exit-zero 出报告不拦门。
-      # 归零属于后续 credit ruff 配置任务，见 docs 与 P1 清单。
-      - name: ruff check（credit，基线守卫，暂不拦截）
-        run: python -m ruff check modules/credit/test_regression.py modules/credit/notify.py modules/credit/healthcheck.py --exit-zero
+      # credit 模块从原仓平移进来时带着既有 lint 债务，清零属于后续任务
+      # （见 docs 与 P1 清单），本轮只守「不再新增」。
+      #
+      # ⚠️ 这一步以前是 `ruff check ... --exit-zero`，注释写着「只守不再新增」，
+      # 但 --exit-zero 的语义是**永远返回 0**，所以「不再新增」实际从未生效。
+      # 现改用 tools/credit_lint_baseline.py：拿 ruff 的 JSON 结果与仓库内
+      # tools/credit_lint_baseline.json 比对，出现基线里没有的（文件, 规则）
+      # 组合、或同类问题变多，就退出 1。修好一处不会被拦，引入一处一定被拦。
+      - name: ruff check（credit，基线守卫，只拦新增）
+        run: python tools/credit_lint_baseline.py
 
   # ---------- Job 2：三套 pytest（必须分开跑，conftest 同名冲突） ----------
   tests:
@@ -62,7 +67,7 @@ jobs:
       # 口径与 README「测试口径」注一致：三个套件必须分开跑——
       # wipo 的 tests/ 与 tests_new/ 各有一个同名 conftest.py，
       # 合跑报 ImportError: cannot import name 'FAKE_REPORT' from 'conftest'。
-      - name: credit 回归（254）
+      - name: credit 回归（278）
         working-directory: modules/credit
         run: python -m pytest test_regression.py -q
       - name: WIPO 契约（44）

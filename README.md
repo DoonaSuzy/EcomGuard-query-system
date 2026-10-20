@@ -3,7 +3,7 @@
 > 把两个原本独立部署的系统合成**一个服务入口**：一份 OpenAPI、一个进程、两个功能模块。
 > 前端是**一套统一的 SPA**（左侧系统列表切换 WIPO / 营业执照），不再是两个各跑各的界面。
 
-[![tests](https://img.shields.io/badge/tests-433%20passed-brightgreen)](#-开发)
+[![tests](https://img.shields.io/badge/tests-440%20passed-brightgreen)](#-开发)
 [![CI](https://github.com/DoonaSuzy/Aggregated-query-and-inspection-system/actions/workflows/ci.yml/badge.svg)](https://github.com/DoonaSuzy/Aggregated-query-and-inspection-system/actions/workflows/ci.yml)
 [![python](https://img.shields.io/badge/python-%3E%3D3.11-blue)](https://www.python.org/)
 [![api](https://img.shields.io/badge/API-21%20paths%20%2F%2027%20ops-informational)](#-统一接口)
@@ -24,10 +24,10 @@
 
 | 指标 | 值 |
 |---|---|
-| Python 代码（生产） | **11,703 非空行**（58 文件，口径见下注） |
-| Python 代码（测试） | **5,517 非空行**（22 文件） |
+| Python 代码（生产） | **11,854 非空行**（59 文件，口径见下注） |
+| Python 代码（测试） | **5,607 非空行**（22 文件） |
 | 前端源码 | **6,769 非空行**（46 文件，含 1 个生成物） |
-| 自动化测试 | **433 项**（271 + 44 + 118，口径见下注） |
+| 自动化测试 | **440 项**（278 + 44 + 118，口径见下注） |
 | 自建断言脚本 | **131 项**（68 + 63） |
 | 聚合层端到端 | **76 项**（真 Chromium，全程 0 个 4xx/5xx） |
 | 统一 API | **21 条唯一路径 / 27 个 operation**（零冲突） |
@@ -37,9 +37,10 @@
 > **代码量口径**（可复现，生产与测试**分开计**，避免把测试行数混进"代码量"）：
 > 生产 = `modules/wipo/app` **2,573**（30 文件）+ WIPO 顶层 10 个 `.py` **4,498**
 > + WIPO `docs`/`scripts` **194** + `modules/credit` 顶层 9 个 `.py` **3,469**
-> + credit `tools` **42** + 聚合层 **337** + `tools/` **590** = **11,703**。
+> + credit `tools` **42** + 聚合层 **337**（`aggregator.py` + `credit_api_glue.py`
+> + `docker_entrypoint.py`）+ `tools/` **741** = **11,854**。
 > 测试 = `modules/wipo/tests` **2,309**（17 文件）+ `tests_new` **509**（4 文件）
-> + `modules/credit/test_regression.py` **2,699** = **5,517**。
+> + `modules/credit/test_regression.py` **2,789** = **5,607**。
 > 计数只取非空行，排除 `__pycache__` / `node_modules` / `dist*` / `.venv`。
 > 注意 WIPO 顶层含 `web_app.py`（**旧版 Flask 入口，644 行，已无任何代码引用**，只剩注释里提到）
 > 与 `verify_fixes.py` + `verify_new_stack.py`（917 行，自建断言脚本）。
@@ -51,7 +52,7 @@
 
 > **测试口径**（可复现）：三个套件**必须分开跑**，两个 `conftest.py` 同名会冲突
 > （`pytest tests tests_new` 报 `ImportError: cannot import name 'FAKE_REPORT' from 'conftest'`）。
-> `modules/credit/test_regression.py` **271** + `modules/wipo/tests_new` **44** + `modules/wipo/tests` **118** = **433**。
+> `modules/credit/test_regression.py` **278** + `modules/wipo/tests_new` **44** + `modules/wipo/tests` **118** = **440**。
 > 复现：`python -m pytest <路径> -q`（`-q` 的 summary 行能拿到计数，无需 junitxml）。
 > 另有两套不经 pytest 的断言：`verify_fixes.py` 输出「合计 68 项断言，通过 68，失败 0」，
 > `verify_new_stack.py` 输出「结果: 63 通过, 0 失败」。
@@ -100,7 +101,7 @@
 
 > **playwright 为什么取 1.62.0**：camoufox 对它的依赖声明是**无版本上限的裸依赖**（`requires('camoufox')` 输出 `playwright`），
 > 实测 1.62.0 下 camoufox 正常工作；而 WIPO 的 E2E 要 1.62.0。取高版本能同时满足。
-> **fastapi 为什么取 0.143.0**：credit 声明的是 0.118.3，但它的 271 项回归在 0.143.0 上全绿。
+> **fastapi 为什么取 0.143.0**：credit 声明的是 0.118.3，但它的 278 项回归在 0.143.0 上全绿。
 
 ### 前端（两套独立产物）
 
@@ -204,6 +205,8 @@ aggregated-system/
 ├── tools/
 │   ├── build_frontends.py     构建三套前端产物（统一前端 + 每模块 dist/dist-agg）
 │   ├── accept_aggregated.py   端到端验收（起 uvicorn + 真 Chromium，76 项断言）
+│   ├── credit_lint_baseline.py credit 的 lint 基线守卫（只拦新增，不清零）
+│   ├── credit_lint_baseline.json 上面那个脚本的基线快照（31 个（文件, 规则）组合 / 58 条）
 │   └── install_camoufox.py    离线安装 Camoufox 浏览器（目标网络到 GitHub 不通）
 ├── docs/
 │   ├── 单前端双后端整合评估.md   合并方案的设计依据（三形态实测、改造清单、风险）
@@ -449,7 +452,7 @@ python aggregator.py
 而 lifespan 赋值的是新 app → `AttributeError: 'State' object has no attribute 'store'`。
 
 改动后 credit **独立运行行为不变**（自己的 lifespan 仍给 `credit_api.app.state` 赋值），
-它的 271 项回归全部通过。
+它的 278 项回归全部通过。
 
 ### 2. `modules/credit/frontend/src/router/index.ts`：路由 base 支持运行时覆盖
 
@@ -497,7 +500,7 @@ python tools\accept_aggregated.py
 # 2. 三个回归套件（必须分开跑，conftest 同名会冲突）
 cd modules\wipo    ; python -m pytest tests -q               # 118 项 E2E
 cd modules\wipo    ; python -m pytest tests_new -q           # 44 项契约
-cd modules\credit  ; python -m pytest test_regression.py -q   # 271 项
+cd modules\credit  ; python -m pytest test_regression.py -q   # 278 项
 
 # 3. 自建断言（不经 pytest）
 cd modules\wipo    ; python verify_fixes.py                  # 68 项
@@ -540,8 +543,8 @@ CI 的 lint job 就是上面三条的组合，零容忍。
 
 | Job | 内容 | 矩阵 |
 |---|---|---|
-| `lint` | 聚合层 + WIPO 全源码 ruff（零容忍）；credit 测试文件 `--exit-zero` 出报告（19 项上游既有告警，只守「不再新增」） | 单版本 |
-| `tests` | credit 271 + WIPO 契约 44 + verify 68/63（**三套分开跑**，conftest 同名冲突） | Python 3.12 / 3.13（3.11 不进：`numpy==2.5.4` 声明 `Requires-Python>=3.12`，首跑实测装不上） |
+| `lint` | 聚合层 + WIPO 全源码 ruff（零容忍）；credit 走 `tools/credit_lint_baseline.py` 基线守卫——58 条既有债务不拦门，**新增任何一条就红** | 单版本 |
+| `tests` | credit 278 + WIPO 契约 44 + verify 68/63（**三套分开跑**，conftest 同名冲突） | Python 3.12 / 3.13（3.11 不进：`numpy==2.5.4` 声明 `Requires-Python>=3.12`，首跑实测装不上） |
 | `e2e` | `web/` typecheck（`npm ci` + `vue-tsc`）→ 构建三套前端产物（`build_frontends.py`，node_modules 缺失自动 `npm ci`）→ WIPO E2E 118 → 聚合验收 76（真 Chromium） | Python 3.13 + Node 22 |
 
 > ⚠️ CI 的 e2e job 只装 Playwright chromium、**不装 camoufox firefox**（真实巡检
@@ -582,7 +585,7 @@ CI 与本地命令一一对应，口径见上面「质量门禁」。三个注�
 | **Docker 容器化** | ✅ 91 上 `docker compose up -d` 三容器（app / mysql / camoufox-init）全 healthy，真实巡检作业端到端跑通 |
 | 数据库分库 | ✅ 真 MySQL 8.4.9 端到端跑通（WIPO + credit 各一库） |
 | 数据库分表 | ✅ 同库 5 表也跑通（表名零交集） |
-| credit 支持 MySQL | ✅ 同一个 `CREDIT_DB` 变量两形态，271 项回归覆盖 |
+| credit 支持 MySQL | ✅ 同一个 `CREDIT_DB` 变量两形态，278 项回归覆盖 |
 | 共用 venv | ✅ fastapi 0.143.0 + playwright 1.62.0 + camoufox 0.4.11 实测共存 |
 | **两级巡检 + 邮件带名单** | ✅ 每日→业务人员、每月→主管；63 家名单，正文含每家名称/信用代码/登记状态（真发信验证） |
 
@@ -592,7 +595,7 @@ CI 与本地命令一一对应，口径见上面「质量门禁」。三个注�
 |---|---|
 | 聚合层 pytest 契约测试 | 现在只有 `accept_aggregated.py`（要浏览器，不适合 CI） |
 | `modules/` 改 submodule | 现在手工同步上游 |
-| credit 上游的 lint 基线 | 85 项既有告警，接管前应定基线 |
+| credit 上游的 lint 基线 | 基线守卫（`tools/credit_lint_baseline.py` + 69 条快照）已落地，**新增会拦**；把这 69 条真正清零是后续任务 |
 | 架构演进 | 见 `docs/架构演进路线.md`（P1–P4 分期：契约测试 → submodule → 横向扩展 → 可观测） |
 
 ### 📌 已知风险

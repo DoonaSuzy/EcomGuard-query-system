@@ -3222,3 +3222,109 @@ class TestAlwaysNotifyDefaultOn:
         req = api.JobRequest(**{"names": ["A"], "always_notify": True,
                                 "mail_to": "a@b.com"})
         assert req.always_notify is True
+
+
+# ------------------------------------------------------- lint 基线守卫本身
+
+
+class TestLintBaselineGuard:
+    """`tools/credit_lint_baseline.py` 是「只守不再新增」的唯一执行者。
+
+    为什么值得为它写测试：它替代的那一步原来是
+    `ruff check ... --exit-zero`，而 `--exit-zero` 永远返回 0 ——
+    「不再新增」四个字写在注释里、从未真的生效过，且**没有任何地方会红**
+    来提醒这件事。守卫脚本一旦自己坏掉（判定写反、基线读不到就静默通过），
+    会以完全相同的方式退化成摆设。所以这里既测「该拦的拦住了」，
+    也测「不该拦的没被拦」，还测「受守卫的文件集没有留后门」。
+    """
+
+    @staticmethod
+    def _load_module():
+        """按路径加载 tools/ 下的脚本 —— tools 不在 sys.path 上。"""
+        import importlib.util
+        root = HERE.parent.parent
+        path = root / "tools" / "credit_lint_baseline.py"
+        assert path.exists(), f"守卫脚本不见了：{path}"
+        spec = importlib.util.spec_from_file_location("credit_lint_baseline", path)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod
+
+    def test_baseline_file_exists_and_parses(self):
+        """基线必须存在且可解析成 {文件::规则: 条数}，否则守卫会直接退出 2。"""
+        import json
+        path = HERE.parent.parent / "tools" / "credit_lint_baseline.json"
+        assert path.exists(), "基线文件缺失，CI 的守卫步骤会 fail-fast"
+        data = json.loads(path.read_text(encoding="utf-8"))
+        assert data, "基线不能是空对象（那等于要求一次清零，与设计相反）"
+        for key, count in data.items():
+            assert "::" in key, f"基线键必须形如 文件::规则，实际 {key!r}"
+            fname = key.split("::", 1)[0]
+            assert fname.startswith("modules/credit/"), f"基线只该记 credit 模块：{fname}"
+            assert isinstance(count, int) and count > 0, f"{key} 的条数非法：{count!r}"
+
+    def test_guarded_set_is_all_credit_python_files(self):
+        """受守卫的文件必须覆盖 credit 的全部手写 Python，不能漏一个。
+
+        漏掉的文件等于开了后门：往里写多少新问题都不会被拦。
+        也反向检查守卫集里没有已删除的文件，否则脚本会因路径不存在而报错。
+        """
+        mod = self._load_module()
+        root = HERE.parent.parent
+        actual = {p.relative_to(root).as_posix()
+                  for p in (root / "modules" / "credit").glob("*.py")}
+        missing = actual - set(mod.GUARDED)
+        assert not missing, f"这些文件没进守卫集，等于放任新增：{sorted(missing)}"
+        stale = set(mod.GUARDED) - actual
+        assert not stale, f"守卫集里有不存在的文件：{sorted(stale)}"
+
+    def test_new_problem_detects_new_combo(self):
+        """基线里没有的（文件, 规则）组合必须算「新增」。"""
+        import collections
+        mod = self._load_module()
+        base = collections.Counter({("modules/credit/notify.py", "BLE001"): 4})
+        current = collections.Counter(base)
+        current[("modules/credit/roster.py", "F811")] = 1
+        assert mod.new_problems(current, base), "新组合没被识别为新增"
+
+    def test_new_problem_detects_count_growth(self):
+        """同一组合条数变多也算新增 —— 只看组合名会让「同类问题翻倍」漏网。"""
+        import collections
+        mod = self._load_module()
+        base = collections.Counter({("modules/credit/notify.py", "BLE001"): 4})
+        current = collections.Counter({("modules/credit/notify.py", "BLE001"): 5})
+        assert mod.new_problems(current, base), "同类问题变多没被拦"
+
+    def test_new_problem_allows_shrink(self):
+        """修好一处不能红 —— 否则没人愿意顺手改，守卫会变成「禁止改代码」。"""
+        import collections
+        mod = self._load_module()
+        base = collections.Counter({("modules/credit/notify.py", "BLE001"): 4})
+        current = collections.Counter({("modules/credit/notify.py", "BLE001"): 1})
+        assert not mod.new_problems(current, base), "减少问题反而被拦，方向搞反了"
+
+    def test_new_problem_allows_clean_removal(self):
+        """某组合被彻底修掉（键从 current 消失）也不能红。"""
+        import collections
+        mod = self._load_module()
+        base = collections.Counter({("modules/credit/notify.py", "BLE001"): 4,
+                                    ("modules/credit/notify.py", "S110"): 1})
+        current = collections.Counter({("modules/credit/notify.py", "S110"): 1})
+        assert not mod.new_problems(current, base), "问题消失反而被拦"
+
+    def test_guard_passes_on_current_tree(self):
+        """当前检出必须过守卫 —— 这是 CI 那一步的等价断言。
+
+        这条红了说明要么真引入了新问题，要么基线该 `--update` 了；
+        两种都不该被忽略（忽略的下一步就是再加一个 `--exit-zero`）。
+        """
+        import subprocess
+        import sys as _sys
+        root = HERE.parent.parent
+        proc = subprocess.run(
+            [_sys.executable, str(root / "tools" / "credit_lint_baseline.py")],
+            cwd=root, capture_output=True, text=True, encoding="utf-8", check=False)
+        assert proc.returncode == 0, (
+            "credit lint 基线守卫未通过（新增了 lint 问题，或基线需要 --update）：\n"
+            + (proc.stderr or "") + (proc.stdout or ""))
+
