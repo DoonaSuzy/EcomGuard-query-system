@@ -1,0 +1,204 @@
+/**
+ * reconcile.css —— 让营业执照（credit）前端在 WIPO 的设计体系里「长得像 WIPO」，
+ * 同时**一行源码都不改**。
+ *
+ * ## 为什么需要这一层
+ * 两个前端是分别写的，两套 CSS 各自完整，硬塞进同一个页面会互相覆盖：
+ *
+ *   WIPO   语义化前缀：.btn-primary  .btn-sm  .btn-danger  .badge.warning
+ *   credit 无前缀修饰：.btn.primary  .btn.sm  .btn.danger  .badge.ok
+ *
+ * `.btn.primary` 的选择器权重是 (0,2,0)，高于 WIPO 的 `.btn` (0,1,0)，
+ * 所以即使 WIPO 的 style.css 后加载，credit 的按钮配色照样会赢 —— 光靠
+ * 「后加载」压不住它，必须逐条显式映射。这就是本文件存在的原因。
+ *
+ * ## 为什么不直接改 credit 的源码
+ * 那 21 个文件里有 254 项回归测试与一套独立的构建产物（TestFrontendHosting），
+ * 改类名等于同时动测试与独立部署能力。用一层映射把它们保留下来更划算。
+ *
+ * ## 加载顺序（见 main.ts）
+ *   credit main.css → WIPO style.css → **本文件** → shell.css
+ */
+
+/* ------------------------------------------------------------------ *
+ * 一、把 credit 的设计令牌映射到 WIPO 的令牌
+ *
+ * credit 全站颜色都走 var(--c-*)，所以把令牌换掉，它的 6 个视图、
+ * 5 个组件、以及那些 scoped style **自动**变成 WIPO 的靛蓝配色。
+ * 这一步覆盖了 80% 的视觉统一，剩下的只是形状差异。
+ *
+ * 代价：credit 原来的深色模式（main.css 里的
+ * @media (prefers-color-scheme: dark)）失效了。这是有意的 ——
+ * WIPO 没有深色模式，两套并存就会出现「切到营业执照页面突然变黑」，
+ * 与「切换前后风格一致」的验收标准直接冲突。
+ * ------------------------------------------------------------------ */
+:root {
+    --c-bg: var(--bg-secondary);
+    --c-surface: var(--bg-primary);
+    --c-surface-2: var(--bg-secondary);
+    --c-border: var(--border-color);
+    --c-text: var(--text-primary);
+    --c-text-dim: var(--text-secondary);
+
+    --c-primary: var(--primary-color);
+    --c-primary-dim: var(--primary-light);
+
+    --c-ok: var(--success-color);
+    --c-ok-bg: var(--success-light);
+    --c-alert: var(--danger-color);
+    --c-alert-bg: var(--danger-light);
+    --c-warn: var(--warning-color);
+    --c-warn-bg: var(--warning-light);
+    --c-muted: var(--text-secondary);
+    --c-muted-bg: var(--bg-tertiary);
+
+    /* credit 用 --radius 同时管按钮和卡片；WIPO 的卡片圆角由 .card 自己
+       写死 12px（权重相同、后加载胜出），所以这里取 6px 去对齐 WIPO 的输入框与按钮。 */
+    --radius: 6px;
+    --radius-sm: 4px;
+}
+
+/* ------------------------------------------------------------------ *
+ * 二、按钮：credit 的无前缀修饰符 → WIPO 的观感
+ * ------------------------------------------------------------------ */
+.btn.primary {
+    background-color: var(--primary-color);
+    color: var(--text-white);
+    border: none;
+}
+
+.btn.primary:hover:not(:disabled) {
+    background-color: var(--primary-hover);
+}
+
+.btn.primary:disabled {
+    background-color: var(--text-tertiary);
+    cursor: not-allowed;
+}
+
+.btn.danger {
+    background-color: var(--danger-color);
+    color: var(--text-white);
+    border: none;
+}
+
+.btn.danger:hover:not(:disabled) {
+    background-color: #dc2626;
+}
+
+.btn.danger:disabled {
+    background-color: var(--text-tertiary);
+    cursor: not-allowed;
+}
+
+/* credit 的 .btn.sm 与 WIPO 的 .btn-sm 是同一个尺寸，但 credit 那条
+   没写 font-size，会让 13px 的紧凑按钮变成 14px。显式补齐。 */
+.btn.sm {
+    padding: 6px 12px;
+    font-size: 13px;
+}
+
+.btn.block {
+    width: 100%;
+}
+
+/* ------------------------------------------------------------------ *
+ * 三、徽章：同样是权重问题（.badge.ok 高于 .badge）
+ *
+ * 颜色其实已经被第一节的令牌映射带过去了，这里补的是**形状** ——
+ * credit 的 .badge 是 4px 圆角小方块，WIPO 是 9999px 胶囊。
+ * ------------------------------------------------------------------ */
+.badge.ok,
+.badge.alert,
+.badge.warn,
+.badge.muted,
+.badge.primary {
+    display: inline-flex;
+    align-items: center;
+    padding: 4px 10px;
+    border-radius: 9999px;
+    font-size: 12px;
+    font-weight: 500;
+}
+
+.badge.ok {
+    background-color: var(--success-light);
+    color: var(--success-color);
+}
+
+.badge.alert {
+    background-color: var(--danger-light);
+    color: var(--danger-color);
+}
+
+.badge.warn {
+    background-color: var(--warning-light);
+    color: var(--warning-color);
+}
+
+.badge.muted {
+    background-color: var(--bg-tertiary);
+    color: var(--text-secondary);
+}
+
+.badge.primary {
+    background-color: var(--primary-light);
+    color: var(--primary-color);
+}
+
+/* ------------------------------------------------------------------ *
+ * 四、表格：credit 用 table.tbl，WIPO 用 .data-table
+ *
+ * 令牌映射已经把颜色对齐了，但内边距/表头底色/行悬停仍是 credit 的
+ * 紧凑风格，与 WIPO 的 .data-table 摆在一起会明显不是一套东西。
+ * ------------------------------------------------------------------ */
+.sys-credit table.tbl {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+.sys-credit table.tbl thead {
+    background-color: var(--bg-secondary);
+}
+
+.sys-credit table.tbl th {
+    padding: 12px 16px;
+    text-align: left;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-secondary);
+    border-bottom: 1px solid var(--border-color);
+    white-space: nowrap;
+}
+
+.sys-credit table.tbl td {
+    padding: 14px 16px;
+    font-size: 14px;
+    color: var(--text-primary);
+    border-bottom: 1px solid var(--border-color);
+}
+
+.sys-credit table.tbl tbody tr:hover {
+    background-color: var(--bg-hover);
+}
+
+/* ------------------------------------------------------------------ *
+ * 五、内容区宽度与内边距
+ *
+ * credit 原来的布局是：<main class="page"> 自带 padding 24px + max-width 1180px。
+ * 统一壳里它的内容挂在 .sys-credit 下，那个 .page 容器已经不存在了，
+ * 而 WIPO 的 .main-content 自己就有 padding 24px —— 所以这里**只补宽度**，
+ * 不能再补内边距，否则营业执照会比其他系统多缩进 24px。
+ * ------------------------------------------------------------------ */
+.sys-credit {
+    max-width: 1180px;
+    width: 100%;
+}
+
+/* WIPO 的 .page 是 display:none / .active 才显示。credit 的 main.css 也给
+   .page 加了 padding 与 max-width，两条规则都会作用到 WIPO 那四个 <section>，
+   结果它们被多套一层 24px 内边距。在 WIPO 宿主里把 credit 那部分中和掉。 */
+.wipo-host .page {
+    padding: 0;
+    max-width: none;
+}

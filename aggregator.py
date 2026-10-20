@@ -1,17 +1,19 @@
 """聚合查询与巡检系统 —— 统一入口。
 
-一个 uvicorn 进程同时服务两个独立模块：
+一个 uvicorn 进程同时服务两个独立模块，前端只有**一套**：
 
-    /wipo/*      WIPO 商标监控前端（modules/wipo/web/dist-agg，--base=/wipo/ 构建）
-    /credit/*    营业执照巡检前端（modules/credit/frontend/dist-agg，--base=/credit/ 构建）
-    /api/*       WIPO 接口（11 条）
-    /api/jobs*   营业执照接口（5 条，含 /api/health）
-    /           壳页：两个模块的入口卡片
+    /*          统一前端（web/dist，Vue 3 + vue-router，SPA 深链兜底）
+    /api/*      WIPO 接口（11 条）
+    /api/jobs*  营业执照接口（5 条，含 /api/health）
 
-注意两个模块的 `dist-agg/` 与它们各自的 `dist/` 是**两套产物**：`dist/` 用默认 base
-（模块独立运行与独立回归用），`dist-agg/` 带子路径 base（本聚合系统托管用）。
-两者不能互相顶替，理由见 `WIPO_DIST` 上方的注释。
-构建命令：`python tools/build_frontends.py`。
+前端从「两个 SPA + iframe 壳」改成了「一套 SPA + 左侧系统列表」：两套独立的
+全局 CSS（同名类 .page/.btn/.card/.badge/.toast）不再同页共存，因此不再需要
+iframe 隔离，也不再有「切换系统时整页样式跳变」。两个模块的前端源码没有被
+复制或重写 —— 它们作为「页面包」被 web/ 用 Vite 别名引用（@wipo、@），
+各自仍能独立构建与独立跑回归（见 docs/统一前端方案.md）。
+
+构建命令：`python tools/build_frontends.py`（一次建三套：web/dist 统一产物，
+外加两个模块各自的 dist 与 dist-agg 供模块独立运行/回归使用）。
 
 为什么是「单 app + include_router」而不是「mount 两个子 app」
 ------------------------------------------------------------
@@ -44,9 +46,9 @@ import sys
 from collections.abc import AsyncIterator
 from pathlib import Path
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, RedirectResponse, Response
+from fastapi.responses import RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
@@ -80,19 +82,14 @@ from credit_api_glue import credit_lifespan_enter, credit_lifespan_exit
 
 __all__ = ["app", "create_app"]
 
-WIPO_DIST = Path(os.getenv("WIPO_DIST", WIPO_DIR / "web" / "dist-agg"))
-CREDIT_DIST = Path(os.getenv("CREDIT_DIST", CREDIT_DIR / "frontend" / "dist-agg"))
-
-# 两套产物并存，原因：
-#   模块自己的 `dist/` 按默认 base（`/` 或 `./`）构建 —— 那是它们**独立运行**
-#   与**独立跑回归**的产物（WIPO 的 110 项 E2E 直接打站点根；credit 的
-#   test_regression.py 也按根路径断言）。挂到子路径后必须换成
-#   `dist-agg/`（构建时带 `--base=/wipo/`、`--base=/credit/`），因为 Vite 的
-#   动态 chunk 是按**模块 URL**解析的（`import("./OverviewView-x.js")`），
-#   改 HTML 或用 `<base href>` 都纠正不了它 —— 只能是构建期把 base 写进产物。
-#   构建命令：python tools/build_frontends.py（两套产物一次建完）。
-_WIPO_DIST_STANDALONE = WIPO_DIR / "web" / "dist"
-_CREDIT_DIST_STANDALONE = CREDIT_DIR / "frontend" / "dist"
+# 统一前端的产物。**只有这一份**参与聚合托管：两个模块的源码被 web/ 以
+# Vite 别名引用后打包进同一份 bundle，所以不需要再按子路径各挂一套。
+#
+# 模块自己的 `dist/`（默认 base）与 `dist-agg/`（带 /wipo/、/credit/ 前缀）
+# 依然保留，但用途变了：它们只服务于**模块独立运行**与**模块独立回归**
+# （WIPO 的 118 项 E2E 直接打站点根，credit 的 TestFrontendHosting 同理），
+# 聚合入口不再引用它们。
+UNIFIED_DIST = Path(os.getenv("WEB_DIST", BASE_DIR / "web" / "dist"))
 
 
 class SPAFiles(StaticFiles):
@@ -150,128 +147,19 @@ class SPAFiles(StaticFiles):
         )
 
 
-SHELL_HTML = """<!doctype html>
-<html lang="zh-CN">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>聚合查询与巡检系统</title>
-<style>
-  :root { color-scheme: light dark;
-          --bg: #f5f6f8; --fg: #1f2328; --panel: #ffffff;
-          --line: #d8dee4; --muted: #59636e; --accent: #0b6bcb; }
-  @media (prefers-color-scheme: dark) {
-    :root { --bg: #16181d; --fg: #e6edf3; --panel: #1f2329;
-            --line: #30363d; --muted: #9198a1; --accent: #5aa9f5; }
-  }
-  * { box-sizing: border-box; }
-  html, body { height: 100%; }
-  body {
-    margin: 0; height: 100vh; display: flex; flex-direction: column;
-    font-family: system-ui, -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
-    background: var(--bg); color: var(--fg);
-  }
-  header {
-    flex: 0 0 auto; display: flex; align-items: center; gap: 16px;
-    height: 52px; padding: 0 16px; background: var(--panel);
-    border-bottom: 1px solid var(--line);
-  }
-  .brand { font-size: 15px; font-weight: 600; white-space: nowrap; }
-  nav { display: flex; gap: 6px; }
-  .tab {
-    display: inline-flex; align-items: center; padding: 7px 14px;
-    border-radius: 8px; border: 1px solid transparent;
-    font-size: 13.5px; color: var(--muted); text-decoration: none;
-  }
-  .tab:hover { background: rgba(127, 127, 127, 0.12); }
-  .tab.active {
-    color: var(--accent); font-weight: 600;
-    background: rgba(11, 107, 203, 0.10);
-    border-color: rgba(11, 107, 203, 0.30);
-  }
-  .spacer { flex: 1 1 auto; }
-  .hint { font-size: 12.5px; color: var(--muted); }
-  .hint a { color: inherit; }
-  main { flex: 1 1 auto; position: relative; min-height: 0; }
-  iframe {
-    position: absolute; inset: 0; width: 100%; height: 100%;
-    border: 0; display: block; background: var(--bg);
-  }
-</style>
-</head>
-<body>
-<header>
-  <span class="brand">聚合查询与巡检系统</span>
-  <nav>
-    <a class="tab" href="#/wipo" data-module="wipo">WIPO 商标监控</a>
-    <a class="tab" href="#/credit" data-module="credit">营业执照状态巡检</a>
-  </nav>
-  <span class="spacer"></span>
-  <span class="hint">接口文档 <a href="/docs" target="_blank" rel="noopener">/docs</a></span>
-</header>
-<main>
-  <iframe id="module-frame" title="模块内容" src="/wipo/"></iframe>
-</main>
-<script>
-  // 一个页面内切换模块：顶部导航常驻，模块内容在 iframe 里。
-  // 用 iframe 而不是把两套 SPA 合成一份，是因为两个前端的全局 CSS 同名类
-  // （.page / .btn / .card / .badge / .toast）会互相覆盖 —— 实测同页加载时
-  // 营业执照整站不可见。iframe 各自独立文档，零冲突、两边产物都不用改。
-  var MODULES = { wipo: '/wipo/', credit: '/credit/' };
-  var frame = document.getElementById('module-frame');
-  var tabs = Array.prototype.slice.call(document.querySelectorAll('.tab'));
+def _mount_unified_frontend(app: FastAPI, dist: Path) -> bool:
+    """把统一前端挂到站点根。返回是否真的挂上。
 
-  function parse() {
-    var raw = decodeURIComponent((location.hash || '').replace(/^#\\/?/, ''));
-    if (!raw) return { m: 'wipo', sub: '' };
-    var parts = raw.split('/');
-    var m = MODULES[parts[0]] ? parts[0] : 'wipo';
-    return { m: m, sub: parts.slice(1).join('/') };
-  }
-
-  function apply() {
-    var st = parse();
-    var src = MODULES[st.m] + st.sub;
-    if (frame.getAttribute('src') !== src) frame.setAttribute('src', src);
-    tabs.forEach(function (t) {
-      t.classList.toggle('active', t.dataset.module === st.m);
-    });
-    document.title = (st.m === 'wipo' ? 'WIPO 商标监控' : '营业执照状态巡检')
-                     + ' · 聚合查询与巡检系统';
-  }
-
-  window.addEventListener('hashchange', apply);
-  apply();
-
-  // 把 iframe 内部的跳转同步回地址栏，刷新后能回到同一个页面。
-  // 用 replaceState 而不是改 location.hash，避免触发 hashchange 造成二次加载。
-  setInterval(function () {
-    var st = parse();
-    var path;
-    try { path = frame.contentWindow.location.pathname; } catch (e) { return; }
-    var base = MODULES[st.m];
-    if (!path || path.indexOf(base) !== 0) return;
-    var sub = path.slice(base.length).replace(/\\/$/, '');
-    var want = '#/' + st.m + (sub ? '/' + sub : '');
-    if (location.hash !== want) history.replaceState(null, '', want);
-  }, 500);
-</script>
-</body>
-</html>
-"""
-
-
-def _mount_module_frontend(
-    app: FastAPI, prefix: str, dist: Path, runtime_base: str = ""
-) -> bool:
-    """把某个模块的前端产物挂到 ``prefix`` 下。返回是否真的挂上。"""
+    没挂上时接口仍然全部可用（只少一个页面入口），这与统一前的行为一致：
+    产物缺失不该让整个服务起不来。
+    """
     index = dist / "index.html"
     if not index.is_file():
         return False
     app.mount(
-        prefix,
-        SPAFiles(directory=str(dist), prefix=prefix, runtime_base=runtime_base),
-        name=prefix.strip("/"),
+        "",
+        SPAFiles(directory=str(dist), prefix=""),
+        name="web",
     )
     return True
 
@@ -304,6 +192,7 @@ def create_app() -> FastAPI:
             {"name": "reports", "description": "检查报告归档与详情（WIPO 模块）"},
             {"name": "io", "description": "清单导入导出（WIPO 模块）"},
             {"name": "jobs", "description": "营业执照巡检查询作业（营业执照模块）"},
+            {"name": "schedules", "description": "定时巡检的增删改查与手动触发（营业执照模块）"},
             {"name": "system", "description": "两个模块共用的健康检查与接口自描述"},
         ],
         lifespan=combined_lifespan,
@@ -331,26 +220,25 @@ def create_app() -> FastAPI:
 
     app.include_router(credit_router)
 
-    # ---- 子路径重定向：/credit 没有尾斜杠时会被壳页路由接走 ----
-    # 必须在 mount 之前、且必须是精确路径；用 307 保留方法语义。
+    # ---- 旧地址重定向（统一前端后这两个子路径不再存在）----
+    # 之前是「两个 SPA 各挂一个子路径 + iframe 壳」，所以 /wipo/、/credit/
+    # 曾经是真实入口。现在前端只有一套，把它们指到统一前端里对应的首页，
+    # 免得旧书签/文档里的链接落到 404。
+    # 用 307 保留方法语义；必须精确路径，且必须在 mount 之前注册。
     @app.get("/wipo", include_in_schema=False)
-    async def _wipo_redirect() -> RedirectResponse:
-        return RedirectResponse("/wipo/", status_code=307)
+    @app.get("/wipo/", include_in_schema=False)
+    async def _legacy_wipo() -> RedirectResponse:
+        return RedirectResponse("/input", status_code=307)
 
     @app.get("/credit", include_in_schema=False)
-    async def _credit_redirect() -> RedirectResponse:
-        return RedirectResponse("/credit/", status_code=307)
+    @app.get("/credit/", include_in_schema=False)
+    async def _legacy_credit() -> RedirectResponse:
+        return RedirectResponse("/overview", status_code=307)
 
-    @app.get("/", include_in_schema=False)
-    async def _shell(request: Request) -> HTMLResponse:
-        return HTMLResponse(SHELL_HTML, headers={"Cache-Control": "no-store"})
-
-    # ---- 前端：先挂子路径，最后才挂根（顺序有语义）----
-    # 两个模块的 dist 若缺一个，只少一个入口，不影响另一个与全部接口。
-    _mount_module_frontend(app, "/wipo", WIPO_DIST)
-    # credit 的 vue-router base 是构建期常量，独立部署时是 `/`，
-    # 这里通过注入 `window.__CREDIT_BASE__` 在托管层纠正到 `/credit/`。
-    _mount_module_frontend(app, "/credit", CREDIT_DIST, runtime_base="__CREDIT_BASE__")
+    # ---- 前端：统一 SPA 挂在站点根，**必须最后挂** ----
+    # Starlette 按注册顺序匹配：接口路由（含 /docs、/openapi.json、/health）
+    # 都在上面注册过了，所以根 mount 只兜住剩下的页面路径。
+    _mount_unified_frontend(app, UNIFIED_DIST)
 
     return app
 

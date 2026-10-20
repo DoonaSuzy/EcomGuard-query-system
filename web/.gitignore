@@ -1,0 +1,17 @@
+# 依赖与产物
+#
+# 根 .gitignore 只排了 `dist-agg/`（那是模块专用的聚合子路径产物），
+# 没有 `dist/` —— 因为两个模块各自的 .gitignore 里已经排了自己的 dist/。
+# 统一前端是本仓库里第三个 vite 工程，它没有自己的 .gitignore，
+# 所以必须在这里显式排掉，否则 `git add web/` 会把 node_modules（几百 MB）
+# 和构建产物一起提交进去。
+node_modules/
+dist/
+
+# 本地开发时的环境覆盖（VITE_API_TARGET 等）
+.env.local
+.env.*.local
+
+# vite / tsc 缓存
+.vite/
+*.tsbuildinfo

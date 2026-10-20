@@ -174,9 +174,15 @@ Disable-ScheduledTask -TaskName "CreditChina-LicenseCheck"
 # 聚合健康（应 200 且 dependencies.database=up；三态 ok/degraded/down）
 curl -s http://127.0.0.1:8000/health | python3 -m json.tool
 
-# 两个模块的前端都在
-curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:8000/wipo/
-curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:8000/credit/
+# 统一前端与八个业务路由都在（应全 200）
+curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:8000/
+for p in input list check reports overview submit schedules jobs; do
+  printf '%-10s ' "$p"; curl -s -o /dev/null -w '%{http_code}\n' "http://127.0.0.1:8000/$p"
+done
+
+# 旧地址应 307 到新路由（不是 200，也不是 404）
+curl -s -o /dev/null -w '%{http_code} -> %{redirect_url}\n' http://127.0.0.1:8000/wipo
+curl -s -o /dev/null -w '%{http_code} -> %{redirect_url}\n' http://127.0.0.1:8000/credit
 
 # Swagger 分组完整（应看到 7 个 tag：check/io/jobs/reports/schedules/system/trademarks）
 curl -s http://127.0.0.1:8000/openapi.json | python3 -c "import json,sys; d=json.load(sys.stdin); print('paths=',len(d['paths'])); print(sorted({t for p in d['paths'].values() for op in p.values() for t in op.get('tags',[])}))"
@@ -212,13 +218,18 @@ docker compose logs app | grep -E "已挂载|调度补算"
 
 ## 7. 已完成的实测验证（在 192.168.101.91 上，Docker 29.8.2 / Compose v5.6.0）
 
+> ⚠️ **§7.1–§7.2b 是「统一前端」之前（iframe 壳 + 两个子路径前端）的实测记录**，
+> 保留它们作为**容器化本身**（依赖安装、Camoufox、MySQL、端口绑定）的证据 ——
+> 那部分与前端形态无关，结论仍然有效。
+> 前端形态相关的端点与页面，见 §7.2c（统一前端后重测）。
+
 ### 7.1 构建与启动
 
 | 项 | 结果 |
 |---|---|
 | `docker compose config`（空 `MYSQL_ROOT_PASSWORD`） | ✅ 按设计拒绝：`required variable MYSQL_ROOT_PASSWORD is missing a value` |
 | `docker compose config`（填了密码） | ✅ 通过 |
-| `docker build --target frontend` | ✅ 两个前端都构建成功，`✓ wipo dist-agg 前缀正确（/wipo/assets/）`、`✓ credit dist-agg 前缀正确（/credit/assets/）` |
+| `docker build --target frontend` | ✅ 三个前端工程都构建成功（`web/` 统一前端 + wipo + credit），自检输出 `✓ wipo dist-agg 前缀正确（/wipo/assets/）`、`✓ credit dist-agg 前缀正确（/credit/assets/）`、`✓ unified web/dist 已生成（资源前缀 /assets/）` |
 | 完整镜像构建 `docker compose build app` | ✅ 成功产出 `aggregated-inspection-app:local` |
 | `docker compose up -d` | ✅ agg-mysql / agg-app 均 `Up (healthy)` |
 | Camoufox / ddddocr 在 Linux 容器内运行 | ✅ 见 [`UBT-docker-部署可行性.md`](UBT-docker-部署可行性.md) |

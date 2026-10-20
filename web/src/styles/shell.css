@@ -1,0 +1,85 @@
+/**
+ * shell.css —— 统一壳新增的类，只补 WIPO 的 style.css 里**没有**的那几个。
+ *
+ * WIPO 原有的 .sidebar / .logo / .nav / .nav-item / .main-content / .header
+ * 全部照旧复用（这也是「统一成 WIPO 样式」最省的做法：壳本身就是 WIPO 的壳），
+ * 这里只加「左侧系统列表」这一层，以及功能导航的分组标题。
+ */
+
+/* WIPO 的 style.css 在第 168 行用了 var(--radius-full) 但从未定义它，
+   浏览器把无效的 border-radius 当 0 处理 —— 所以「共 N 个商标」那个
+   药丸一直是直角的。补上定义顺带修掉这个历史小缺陷。 */
+:root {
+    --radius-full: 9999px;
+}
+
+/* ------------------------------------------------------------------ *
+ * 系统列表（侧栏上半区）
+ *
+ * 位置：logo 之下、功能导航之上，用一条半透明白线分隔。
+ * 交互：整块可点，切到该系统的首页；当前系统加高亮 + 左侧竖条。
+ * ------------------------------------------------------------------ */
+.sys-list {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 12px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.sys-item {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 10px 12px;
+    border-radius: var(--radius);
+    color: rgba(255, 255, 255, 0.75);
+    text-decoration: none;
+    /* 竖条用 inset 阴影画，不占布局空间，切换时不会有 3px 抖动 */
+    box-shadow: inset 0 0 0 0 transparent;
+    transition:
+        background-color 0.15s ease,
+        color 0.15s ease,
+        box-shadow 0.15s ease;
+}
+
+.sys-item:hover {
+    background-color: rgba(255, 255, 255, 0.08);
+    color: var(--text-white);
+}
+
+.sys-item.active {
+    background-color: rgba(255, 255, 255, 0.16);
+    color: var(--text-white);
+    box-shadow: inset 3px 0 0 #a5b4fc;
+}
+
+.sys-name {
+    font-size: 14px;
+    font-weight: 600;
+    line-height: 1.3;
+}
+
+.sys-desc {
+    font-size: 12px;
+    color: rgba(255, 255, 255, 0.45);
+    line-height: 1.3;
+}
+
+.sys-item.active .sys-desc,
+.sys-item:hover .sys-desc {
+    color: rgba(255, 255, 255, 0.7);
+}
+
+/* ------------------------------------------------------------------ *
+ * 功能导航的分组标题
+ *
+ * 侧栏现在有两层：系统（上）与功能（下）。没有标题的话，两个系统的
+ * 功能项看起来是同一层级的平铺列表，切换时会显得像是「导航项变多了/少了」。
+ * ------------------------------------------------------------------ */
+.nav-group-title {
+    padding: 4px 12px 8px;
+    font-size: 12px;
+    font-weight: 600;
+    color: rgba(255, 255, 255, 0.4);
+}

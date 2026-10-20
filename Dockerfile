@@ -17,7 +17,10 @@
 #   3) `camoufox fetch` 会在 addons.mozilla.org 拉 UBO 插件，该地址实测
 #      返回 451，留下一个残缺目录，之后 Camoufox() 默认加载它 →
 #      InvalidAddonPath: manifest.json is missing。
-#      这里下载后立刻 rm -rf addons，并在启动参数里显式 addons=[]。
+#      修法**不是**传 addons=[]（那只是清掉自定义插件，默认插件照样会被
+#      add_default_addons 加回来，实测无效），而是传
+#      exclude_addons=[DefaultAddons.UBO]（见 credit_check.py）。
+#      这里下载后仍 rm -rf addons 作为双保险。
 #
 #   4) camoufox 浏览器本体 1.3 GB **不在镜像里**。
 #      原因：camoufox fetch 从 github.com/daijro/camoufox/releases 下载，
@@ -42,6 +45,7 @@ WORKDIR /src
 # 用 node:22 是取了较新且 22 仍是 LTS 的版本；若将来引擎要求变化，改这里。
 COPY modules/wipo/web/package.json modules/wipo/web/package-lock.json modules/wipo/web/
 COPY modules/credit/frontend/package.json modules/credit/frontend/package-lock.json modules/credit/frontend/
+COPY web/package.json web/package-lock.json web/
 
 # node 官方镜像里命令是 npm/node，**没有 python**。
 # build_frontends.py 只需要标准库，所以装一个最小的 python3。
@@ -51,12 +55,17 @@ RUN apt-get update \
  && rm -rf /var/lib/apt/lists/*
 
 RUN cd modules/wipo/web && npm ci --no-audit --no-fund \
- && cd ../../credit/frontend && npm ci --no-audit --no-fund
+ && cd ../../credit/frontend && npm ci --no-audit --no-fund \
+ && cd ../../../web && npm ci --no-audit --no-fund
 
 COPY modules ./modules
+COPY web ./web
 COPY tools ./tools
 
-# 两套产物都要构建：dist-agg（聚合用）+ dist（模块独立运行用）。
+# 三套产物都要构建（tools/build_frontends.py 一次全建）：
+#   web/dist                 统一前端 —— 聚合入口唯一使用的产物
+#   modules/*/dist           模块独立运行（默认 base）
+#   modules/*/dist-agg       模块以子路径单独托管（带 /wipo/ /credit/ 前缀）
 #
 # 曾经只构建 dist-agg，理由是「dist/ 在容器里没有消费者」。这个判断是错的，
 # 实测代价：
@@ -67,8 +76,8 @@ COPY tools ./tools
 #   b) 镜像内跑 WIPO 自己的 E2E（110 项打默认 base）时，7 项图标/下载用例
 #      因测到旧标记而失败（实测：编辑按钮宽 12 而非 28，即 CSS 完全没加载）。
 #      也就是说镜像此前不是 WIPO 测试的忠实环境，只能靠宿主机跑。
-# 不带 --agg 时脚本会先建 dist/ 再建 dist-agg/（见 tools/build_frontends.py:68），
-# 一次构建两套齐全。
+# 不带 --agg 时脚本会先建模块的 dist/ 再建 dist-agg/，最后建统一前端
+# （见 tools/build_frontends.py 的 main()），一次构建三套齐全。
 #
 # 用 python3 而不是 python：node 官方镜像只带 python3，没有 python 这个别名
 # （实测 `python: not found`，exit 127）。这是本阶段唯一的坑。
@@ -130,9 +139,8 @@ ENV PYTHONUNBUFFERED=1 \
     AGG_PORT=8000 \
     # 硬约束：scheduler 与 worker 都是进程内单实例，多 worker 会重复入队
     AGG_WORKERS=1 \
-    # 产物由构建期生成，路径固定
-    WIPO_DIST=/app/modules/wipo/web/dist-agg \
-    CREDIT_DIST=/app/modules/credit/frontend/dist-agg \
+    # 统一前端产物（整个应用只有一套 SPA，挂在 /）
+    WEB_DIST=/app/web/dist \
     # camoufox 的家目录：见下方卷挂载
     HOME=/home/appuser
 
@@ -164,12 +172,22 @@ WORKDIR /app
 COPY aggregator.py credit_api_glue.py docker_entrypoint.py ./
 COPY modules ./modules
 
+# 统一前端的产物：整个应用只有这一套 SPA，挂载在 `/`（见 aggregator.py 的
+# _mount_unified_frontend）。.dockerignore 排除了 **/dist/，所以必须从
+# frontend 阶段取；漏了这条，镜像里 / 会 404、接口还能用 —— 表现为
+# 「能调 API 但页面打不开」，很容易被误判成前端构建失败。
+COPY --from=frontend /src/web/dist ./web/dist
+
 # 前端产物必须从 frontend 阶段取，**不能**靠上面那条 COPY modules：
 # .dockerignore 排除了 **/dist-agg/（避免把本地产物塞进构建上下文），
 # 所以上下文里的 modules 是不带 dist-agg 的。少了这两行，
 # 镜像里就没有 /wipo/ /credit/ 的静态文件，实测表现为
 #   GET /wipo/ → 307 跳 /wipo → 405 Method Not Allowed
 # （StaticFiles 目录不存在，Starlette 的 redirect_slashes 把请求打回去）。
+#
+# 注意：聚合入口已经**不再**读这两个目录（统一后 /wipo/ /credit/ 只剩 307
+# 重定向到 /input /overview）。保留它们是为了「模块以子路径单独托管」这个
+# 能力，以及 modules 自己的回归测试。
 COPY --from=frontend /src/modules/wipo/web/dist-agg ./modules/wipo/web/dist-agg
 COPY --from=frontend /src/modules/credit/frontend/dist-agg ./modules/credit/frontend/dist-agg
 

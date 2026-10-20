@@ -1,61 +1,69 @@
 # 聚统 · Aggregated Query & Inspection System
 
 > 把两个原本独立部署的系统合成**一个服务入口**：一份 OpenAPI、一个进程、两个功能模块。
-> 页面按子路径切换（`/wipo/`、`/credit/`），数据层各模块可独立选后端。
+> 前端是**一套统一的 SPA**（左侧系统列表切换 WIPO / 营业执照），不再是两个各跑各的界面。
 
-[![tests](https://img.shields.io/badge/tests-364%20passed-brightgreen)](#-开发)
+[![tests](https://img.shields.io/badge/tests-416%20passed-brightgreen)](#-开发)
 [![CI](https://github.com/DoonaSuzy/Aggregated-query-and-inspection-system/actions/workflows/ci.yml/badge.svg)](https://github.com/DoonaSuzy/Aggregated-query-and-inspection-system/actions/workflows/ci.yml)
 [![python](https://img.shields.io/badge/python-%3E%3D3.11-blue)](https://www.python.org/)
-[![api](https://img.shields.io/badge/API-16%20paths%20%2F%2020%20ops-informational)](#-统一接口)
+[![api](https://img.shields.io/badge/API-21%20paths%20%2F%2027%20ops-informational)](#-统一接口)
 
 ---
 
 ## 📖 项目概述
 
-| 模块 | 子路径 | 做什么 | 原始仓库 |
+| 模块 | 前端路由 | 做什么 | 原始仓库 |
 |---|---|---|---|
-| **WIPO 商标监控** | `/wipo/` | 商标法律状态与疑似抢注批量检查、月度报告归档、异常通知 | [WIPO_and_Brand](https://github.com/DoonaSuzy/WIPO_and_Brand) |
-| **营业执照巡检** | `/credit/` | 信用中国企业登记状态批量查询（存续 / 注销 / 吊销）、CSV 交付、异常推送 | [Business-License](https://github.com/DoonaSuzy/Business-License) |
+| **WIPO 商标监控** | `/input` `/list` `/check` `/reports` | 商标法律状态与疑似抢注批量检查、月度报告归档、异常通知 | [WIPO_and_Brand](https://github.com/DoonaSuzy/WIPO_and_Brand) |
+| **营业执照巡检** | `/overview` `/submit` `/schedules` `/jobs` | 信用中国企业登记状态批量查询（存续 / 注销 / 吊销）、CSV 交付、异常推送 | [Business-License](https://github.com/DoonaSuzy/Business-License) |
 
 两个模块的完整源码放在 `modules/` 下，**保持各自仓库原样**（累计只改了 2 个文件，见[对模块源码的改动](#-对模块源码的改动)）。
-聚合层是根目录的 `aggregator.py` + `credit_api_glue.py`，约 329 行。
+聚合层是根目录的 `aggregator.py` + `credit_api_glue.py` + `docker_entrypoint.py`，约 337 行。
 
-**现状一览**（2026-10-19 实测）：
+**现状一览**（2026-10-20 实测）：
 
 | 指标 | 值 |
-|---|---:|
-| Python 代码 | **14,634 非空行**（75 文件，口径见下注） |
-| 前端源码 | **4,683 非空行**（38 文件，含 1 个生成物） |
-| 自动化测试 | **364 项**（202 + 44 + 118，口径见下注） |
+|---|---|
+| Python 代码（生产） | **11,588 非空行**（66 文件，口径见下注） |
+| Python 代码（测试） | **5,329 非空行**（23 文件） |
+| 前端源码 | **6,769 非空行**（46 文件，含 1 个生成物） |
+| 自动化测试 | **416 项**（254 + 44 + 118，口径见下注） |
 | 自建断言脚本 | **131 项**（68 + 63） |
-| 聚合层端到端 | **41 项**（真 Chromium，全程 0 个 4xx/5xx） |
-| 统一 API | **16 条唯一路径 / 20 个 operation**（零冲突） |
-| 数据库表 | **5 张**（`trademarks` / `reports` / `check_runs` / `jobs` / `results`） |
-| 前端产物 | **4 套**（每模块 2 套：独立运行 + 子路径托管） |
+| 聚合层端到端 | **76 项**（真 Chromium，全程 0 个 4xx/5xx） |
+| 统一 API | **21 条唯一路径 / 27 个 operation**（零冲突） |
+| 数据库表 | **6 张**（`trademarks` / `reports` / `check_runs` / `jobs` / `results` / `schedules`） |
+| 前端产物 | **5 套**（统一前端 1 套 + 每模块 2 套：独立运行 + 子路径托管） |
 
-> **代码量口径**（可复现）：`modules/wipo/app` **2,546** + WIPO 顶层 10 个 `.py` **4,498**
-> + WIPO `docs`/`scripts` **194** + WIPO 测试 **2,581** + `modules/credit` 顶层 8 个 `.py` **4,173**
-> + credit `tools` **42** + 聚合层 **329** + `tools/` **271** = **14,634**。
+> **代码量口径**（可复现，生产与测试**分开计**，避免把测试行数混进"代码量"）：
+> 生产 = `modules/wipo/app` **2,573**（30 文件）+ WIPO 顶层 10 个 `.py` **4,498**
+> + WIPO `docs`/`scripts` **194** + `modules/credit` 顶层 8 个 `.py` **3,370**
+> + credit `tools` **42** + 聚合层 **337** + `tools/` **574** = **11,588**。
+> 测试 = `modules/wipo/tests` + `tests_new` **2,818**（21 文件）+ `modules/credit/test_regression.py` **2,511** = **5,329**。
 > 计数只取非空行，排除 `__pycache__` / `node_modules` / `dist*` / `.venv`。
 > 注意 WIPO 顶层含 `web_app.py`（**旧版 Flask 入口，644 行，已无任何代码引用**，只剩注释里提到）
 > 与 `verify_fixes.py` + `verify_new_stack.py`（917 行，自建断言脚本）。
+> `modules/credit` 顶层口径是 **8 个 .py**（不含 `test_regression.py`，它已计入测试行数）。
+
+> **前端行数口径**：`web/src` **665**（7 文件）+ `modules/wipo/web/src` **2,718**（18 文件）
+> + `modules/credit/frontend/src` **3,386**（21 文件）= **6,769**（46 文件）。
+> 含 `types.d.ts`（1,128 行，由 `openapi-typescript` 生成）；同样只取非空行。
 
 > **测试口径**（可复现）：三个套件**必须分开跑**，两个 `conftest.py` 同名会冲突
 > （`pytest tests tests_new` 报 `ImportError: cannot import name 'FAKE_REPORT' from 'conftest'`）。
-> `modules/credit/test_regression.py` **202** + `modules/wipo/tests_new` **44** + `modules/wipo/tests` **118** = **364**。
+> `modules/credit/test_regression.py` **254** + `modules/wipo/tests_new` **44** + `modules/wipo/tests` **118** = **416**。
 > 复现：`python -m pytest <路径> -q`（`-q` 的 summary 行能拿到计数，无需 junitxml）。
 > 另有两套不经 pytest 的断言：`verify_fixes.py` 输出「合计 68 项断言，通过 68，失败 0」，
 > `verify_new_stack.py` 输出「结果: 63 通过, 0 失败」。
 
-> **API 口径**（可复现）：`aggregator.create_app().openapi()['paths']` = 16 键 / 20 个 operation
-> （`/api/jobs`、`/api/trademarks` 各有 GET+POST，三个 `{id}` 路径各有两个方法）。
+> **API 口径**（可复现）：`aggregator.create_app().openapi()['paths']` = **21 键 / 27 个 operation**
+> （`/api/jobs`、`/api/trademarks`、`/api/schedules` 各有 GET+POST，四个 `{id}` 路径各有两个方法）。
 > 复现：`python -c "import aggregator; s=aggregator.create_app().openapi(); print(len(s['paths']), sum(map(len, s['paths'].values())))"`。
 > 两个模块的路径**零交集**，这是能合进一个 app 的前提。
 
 ### 核心能力
 
-- **单入口双模块**：`/` 是模块选择页，`/wipo/` 与 `/credit/` 各跑自己的 SPA，互不干扰
-- **一份 OpenAPI**：16 条路径合并导出，前端可一次 `openapi-typescript` 生成全部类型
+- **一套前端**：`/` 挂唯一 SPA，左侧系统列表切换两个业务系统，页面内切换**不整页刷新**、布局不跳变
+- **一份 OpenAPI**：21 条路径合并导出，前端可一次 `openapi-typescript` 生成全部类型
 - **统一错误外壳**：credit 原本裸露的 `{"detail": …}` 自动变成 `{"success": false, "error": …, "request_id": …}`
 - **请求级追踪**：一个 `X-Request-Id` 贯穿两个模块，响应头与响应体一致
 - **数据层可选后端**：WIPO 走 MySQL（SQLAlchemy async + aiomysql），credit 走 SQLite 或 MySQL（同一个环境变量两种形态）
@@ -116,18 +124,30 @@
 ```
 浏览器
   │
-  ├─ /              壳页（两个模块入口卡片）
-  ├─ /wipo/…        WIPO 前端（modules/wipo/web/dist-agg，--base=/wipo/）
-  ├─ /credit/…      营业执照前端（modules/credit/frontend/dist-agg，--base=/credit/）
+  ├─ /  …            统一前端（web/dist，唯一一套 SPA；根 mount 在最后注册）
+  │   ├─ /input /list /check /reports        WIPO 的四个页面
+  │   └─ /overview /submit /schedules /jobs  营业执照的四个页面
+  ├─ /wipo[/]、/credit[/]                   旧地址，307 跳到 /input、/overview
   │
-  ├─ /api/trademarks、/api/check、/api/reports …   WIPO 模块接口（11 条）
-  ├─ /api/jobs、/api/health …                     营业执照模块接口（5 条）
+  ├─ /api/trademarks、/api/check、/api/reports …   WIPO 模块接口
+  ├─ /api/jobs、/api/schedules、/api/health …     营业执照模块接口
   └─ /health        聚合层健康检查
         │
    aggregator.py  ← 一个 FastAPI app，include 两个模块的 router
         ├── modules/wipo/app/…      （WIPO 的 FastAPI 应用，只取 router）
         └── modules/credit/api.py   （credit 的 router）
 ```
+
+前端为什么是「一套 SPA + 左侧系统列表」，而不是两个 iframe/两张入口卡片：
+
+- 两个前端的全局 CSS 有 5 个同名类（`.page` / `.btn` / `.card` / `.badge` / `.toast`），
+  同页加载会互相覆盖 —— 实测营业执照整站不可见。iframe 能隔离，但切换时整块内容重建、
+  布局与滚动位置全跳，且地址栏不反映当前页面。
+- 统一后两个模块的 `.vue` 源码**一行都没改**：`web/` 把 `modules/*/src` 当"页面包"用别名
+  引进来（`@` → credit、`@wipo` → wipo），样式层面用 `reconcile.css` 把 credit 的
+  `--c-*` 令牌映射到 WIPO 的令牌，视觉基准是 WIPO。
+- 代价：两个模块**仍各自保留独立的 vite 工程与产物**（可单独部署，WIPO 的 118 项 E2E 与
+  credit 的前端托管测试都还指着它们），`web/` 只是多出来的一个消费者。
 
 ### 为什么是「单 app + `include_router`」，不是 `mount()` 两个子应用
 
@@ -137,7 +157,7 @@
 |---|---|---|---|
 | `root.mount("/wipo", wipo_app)` | ✅ | **空 `[]`**（mount 不合并子应用 paths） | **不执行**（`app.state` 全 MISSING） |
 | 同上 + 手动 `lifespan_context` | ✅ | **空 `[]`** | 可修好（`['ROOT START','SUB START','SUB STOP','ROOT STOP']`） |
-| `include_router(...)` | ✅ | **16 条合并** | 主 lifespan 内显式串联 |
+| `include_router(...)` | ✅ | **21 条合并** | 主 lifespan 内显式串联 |
 
 选第三种：前端能用**一份** `openapi.json` 生成全部类型，两模块共享同一个 `app.state`、
 同一套中间件（request_id、统一错误外壳、CORS 只配一次）。
@@ -158,9 +178,11 @@ WIPO 的 lifespan 负责建表与释放连接池，credit 的负责建 `Store` �
 ```
 
 两模块的响应头都带 `X-Request-Id`，与响应体里的 `request_id` 一致；上游传入的
-`X-Request-Id` 会原样透传。**已知缺口**：未处理异常（如 MySQL 不可达导致 500）走
-Starlette 最外层 `ServerErrorMiddleware`，此时 `RequestContextMiddleware` 已退出，
-`request_id` 为空（该缺陷在 WIPO 模块里同样存在，未修）。
+`X-Request-Id` 会原样透传。**500 路径也曾丢 `request_id`**：`ServerErrorMiddleware`
+位于 `RequestContextMiddleware` 之外，走到那里时 contextvar 已被 reset。修法是把
+`request_id` 同时写进 `scope["state"]`，异常处理器从 `request.scope["state"]` 取
+（`aggregator.py` 的 `_request_id_for_body`），因此 500 响应体里的 `request_id`
+现在也是真实的。
 
 ---
 
@@ -168,14 +190,24 @@ Starlette 最外层 `ServerErrorMiddleware`，此时 `RequestContextMiddleware` 
 
 ```
 aggregated-system/
-├── aggregator.py              聚合入口：create_app()、壳页、SPAFiles、combined_lifespan
+├── aggregator.py              聚合入口：create_app()、统一前端挂载、combined_lifespan
 ├── credit_api_glue.py         credit 的 lifespan 拆分进出 + router re-export
+├── docker_entrypoint.py       容器入口：拒绝 AGG_WORKERS>1、清 UBO 残缺目录，再转交 aggregator
+├── Dockerfile / docker-compose.yml / .dockerignore     容器化（91 上已端到端跑通）
 ├── requirements.txt           两模块运行依赖的并集（58 项，57 项 `==` 锁定）
+├── web/                       **统一前端**（唯一被聚合入口使用的 SPA）
+│   ├── src/App.vue            左侧系统列表 + 顶栏 + 业务区
+│   ├── src/hosts/WipoHost.vue 把 WIPO 的四个 section 原样挂进来
+│   ├── src/styles/            reconcile.css（令牌映射）+ shell.css（系统列表）
+│   └── vite.config.ts         别名 @ → credit、@wipo → wipo；**必须 dedupe vue**
 ├── tools/
-│   ├── build_frontends.py     构建两套前端产物（dist + dist-agg），带自检
-│   └── accept_aggregated.py   端到端验收（起 uvicorn + 真 Chromium，41 项断言）
+│   ├── build_frontends.py     构建三套前端产物（统一前端 + 每模块 dist/dist-agg）
+│   ├── accept_aggregated.py   端到端验收（起 uvicorn + 真 Chromium，76 项断言）
+│   └── install_camoufox.py    离线安装 Camoufox 浏览器（目标网络到 GitHub 不通）
 ├── docs/
-│   └── 单前端双后端整合评估.md   合并方案的设计依据（三形态实测、改造清单、风险）
+│   ├── 单前端双后端整合评估.md   合并方案的设计依据（三形态实测、改造清单、风险）
+│   ├── Docker部署手册.md        91 上的部署、升级、排障
+│   └── UBT-docker-部署可行性.md 容器化可行性取证（依赖、网络、阻塞项）
 └── modules/
     ├── wipo/                  完整 WIPO 模块（自带 tests/、tests_new/、web/、docs/）
     │   ├── app/               新栈 FastAPI（core / api/v1 / models / repositories / services）
@@ -184,6 +216,7 @@ aggregated-system/
     └── credit/                完整 credit 模块（自带 test_regression.py、frontend/）
         ├── api.py             FastAPI（已改为 request.app.state）
         ├── credit_check.py    Camoufox + ddddocr 巡检核心
+        ├── schedule.py        定时巡检调度线程（每日/每周/每月）
         └── frontend/          Vue 3 前端；dist/ 与 dist-agg/ 是两套产物
 ```
 
@@ -193,22 +226,28 @@ aggregated-system/
 
 ## 🌐 访问地址
 
-服务起来后（默认 `http://127.0.0.1:8000`），以下状态码为 2026-10-19 实测：
+服务起来后（默认 `http://127.0.0.1:8000`），以下状态码为 2026-10-20 实测：
 
 | 地址 | 状态 | 类型 |
 |---|---:|---|
-| `/` | 200 | `text/html`（壳页） |
-| `/wipo/` | 200 | `text/html` |
-| `/wipo` | **307** | 重定向到 `/wipo/` |
-| `/credit/` | 200 | `text/html` |
-| `/credit/jobs` | 200 | `text/html`（深链刷新可用） |
-| `/credit/jobs/{id}` | 200 | `text/html`（深链刷新可用） |
-| `/health` | 200 | `application/json` |
-| `/api/health`、`/api/trademarks`、`/api/reports`、`/api/jobs`、`/api/schema` | 200 | `application/json` |
+| `/` | 200 | `text/html`（统一 SPA，未登录/无 hash 时前端跳到 `/input`） |
+| `/input` `/list` `/check` `/reports` | 200 | `text/html`（WIPO 四页，深链刷新可用） |
+| `/overview` `/submit` `/schedules` `/jobs` | 200 | `text/html`（营业执照四页，深链刷新可用） |
+| `/jobs/{id}` | 200 | `text/html`（详情页深链刷新可用） |
+| `/wipo`、`/wipo/` | **307** | 重定向到 `/input` |
+| `/credit`、`/credit/` | **307** | 重定向到 `/overview` |
+| `/health` | 200 / 503 | `application/json`（WIPO 真实探针，DB 挂了会 503） |
+| `/api/health`、`/api/trademarks`、`/api/reports`、`/api/jobs`、`/api/schedules`、`/api/schema` | 200 | `application/json` |
 | `/api/nonexistent` | **404** | `application/json`（统一外壳，不回落首页） |
+| `/assets/nonexistent.js` | **404** | 纯 404（带扩展名且文件不存在时**不**回落 index.html） |
 
-两个 307 是**必须**的：`mount("/credit", …)` 之后 `GET /credit`（无尾斜杠）会被
-最后一层兜底接走，返回别的模块的首页。`aggregator.py` 在 mount 之前显式注册了这两个重定向。
+最后两行是同一件事的两面：SPA 兜底只对**无扩展名**的路径生效。如果缺失的 `.js`
+被回成 index.html，浏览器会拿 HTML 当 JS 解析、报 `Unexpected token '<'`，
+把"资源没构建"伪装成一个难查的语法错误。
+
+`/wipo/` `/credit/` 的 307 是**刻意保留**的：统一前端的路由换成了 `/input` `/overview`，
+但模块仍可被独立部署在子路径下（模块自己的 E2E 与前端托管测试指着它），
+老书签也不该 404。
 
 ---
 
@@ -242,7 +281,7 @@ python -m venv .venv
 
 两者互不影响：WIPO 用 playwright 自带的 Chromium，credit 用 camoufox 自带的 Firefox。
 
-### 步骤 3 · 构建前端（两套产物，别只建一套）
+### 步骤 3 · 构建前端（三套产物，一次建齐）
 
 ```powershell
 python tools\build_frontends.py
@@ -250,15 +289,25 @@ python tools\build_frontends.py
 
 | 产物 | base | 用途 |
 |---|---|---|
+| `web/dist/` | 默认（`/`） | **聚合入口唯一使用的产物**（统一 SPA） |
 | `modules/*/.../dist/` | 默认（`/` 或 `./`） | 模块**独立运行**与独立跑回归 |
-| `modules/*/.../dist-agg/` | `/wipo/`、`/credit/` | 被本聚合系统挂在子路径下 |
+| `modules/*/.../dist-agg/` | `/wipo/`、`/credit/` | 模块以子路径**单独托管**（聚合已不用） |
 
-**为什么必须两套**：Vite 的动态 chunk 引用是相对路径（`import("./OverviewView-x.js")`），
+**为什么模块还要两套**：Vite 的动态 chunk 引用是相对路径（`import("./OverviewView-x.js")`），
 浏览器按**模块 URL** 解析 —— 既不是文档 URL（`<base href>` 改不了它），
 也不是托管层能改写的（chunk 名已进主 bundle）。所以子路径只能在**构建期**写进产物。
 而模块独立运行时必须用默认 base，否则资源 404、它自己的 E2E 全红。两个约束互斥，只能各建一套。
 
-`dist-agg/` 已在 `.gitignore` 里，不入库 —— **部署前必须跑一次构建**。
+`web/dist` 与 `dist-agg/` 都在 `.gitignore` 里，不入库 —— **部署前必须跑一次构建**。
+
+> ⚠️ 统一前端有个只在**生产构建**下才炸的坑：`web/`、`modules/wipo/web/`、
+> `modules/credit/frontend/` 三个目录各有自己的 `node_modules`，于是各有**一份 vue**
+> （版本相同，但模块实例是三个 → 三个运行时）。rollup 按引用方所在目录解析裸导入，
+> WIPO 的 `.vue` 绑到它自己那份 Vue 的内部符号，运行时直接抛
+> `TypeError: Cannot read properties of undefined (reading '_s')`，页面全白。
+> `npm run dev` 不会暴露（Vite 预打包把 vue 收成一份共享 chunk），所以**别用 dev 的
+> 绿灯推断生产可用**。修法在 `web/vite.config.ts` 的 `resolve.dedupe`：
+> `['vue', 'vue-router', 'pinia', '@vueuse/core']`。
 
 ### 步骤 4 · 配置
 
@@ -310,12 +359,13 @@ credit 是 `jobs`/`results`），把 `CREDIT_DB` 指向 `wipo_trademark` 即可 
 
 | 现象 | 原因 | 处理 |
 |---|---|---|
-| 打开页面全白、控制台 `404 /assets/xxx.js` | 用了默认 base 的 `dist/` 去挂子路径 | 跑 `tools/build_frontends.py` 生成 `dist-agg/` |
-| `GET /credit` 打开的是 WIPO 首页 | 少了尾斜杠重定向 | 用 `/credit/`，或确认 `aggregator.py` 的两个 307 还在 |
-| 深链刷新 404 | SPA 兜底没挂上（`dist-agg/index.html` 不存在） | 先构建；`aggregator.py` 会打「未找到前端产物」日志 |
+| 页面全白、`#app` 里只有一个注释节点 | 多份 Vue 运行时（三个前端目录各有 node_modules） | 确认 `web/vite.config.ts` 的 `resolve.dedupe` 还在，然后**重新 build**（dev 看不出这个问题） |
+| 打开页面全白、控制台 `404 /assets/xxx.js` | 忘了构建，或构建时只建了模块产物没建 `web/dist` | 跑 `tools/build_frontends.py`（不带 `--agg`） |
+| 深链刷新 404 | SPA 兜底没挂上（`web/dist/index.html` 不存在） | 先构建；`aggregator.py` 会打「未找到前端产物」日志 |
 | `Unexpected token '<'` | 静态资源缺失时错误地回落了 index.html | `SPAFiles` 已对「带扩展名」的路径直接 404 |
 | 作业一直「排队中」不动 | 多进程启动，worker 队列在另一个进程里 | `--workers 1` |
 | WIPO 接口 500、`/health` 503 | MySQL 连不上（`dependencies.database: down`） | 起 MySQL，或把 `WIPO_DATABASE__URL` 指到可达实例 |
+| `CREDIT_DB=sqlite:///…` 启动即崩 | `_parse_mysql_url` 见到 `://` 就按 MySQL 解析 | SQLite 要传**纯文件路径**（`data/jobs.db`），不带协议 |
 | `pytest tests tests_new` 报 `ImportError: FAKE_REPORT` | 两个 `conftest.py` 同名冲突 | 分开跑 |
 
 ---
@@ -330,10 +380,9 @@ python aggregator.py
 
 | 环境变量 | 默认 | 说明 |
 |---|---|---|
-| `AGG_HOST` | `127.0.0.1` | 监听地址 |
+| `AGG_HOST` | `127.0.0.1` | 监听地址（容器里必须 `0.0.0.0`） |
 | `AGG_PORT` | `8000` | 监听端口 |
-| `WIPO_DIST` | `modules/wipo/web/dist-agg` | 子路径产物目录 |
-| `CREDIT_DIST` | `modules/credit/frontend/dist-agg` | 子路径产物目录 |
+| `WEB_DIST` | `web/dist` | 统一前端产物目录 |
 | `WIPO_REPORTS_DIR` | `modules/wipo/reports` | 未设时由 `aggregator.py` 兜底设置 |
 
 > **`--workers` 必须为 1**。credit 的作业队列与 Camoufox 浏览器都在进程内，
@@ -343,7 +392,7 @@ python aggregator.py
 
 ## 🔌 统一接口
 
-16 条唯一路径 / 20 个 operation，两模块零冲突：
+21 条唯一路径 / 27 个 operation，两模块零冲突：
 
 | 方法 | 路径 | 模块 |
 |---|---|---|
@@ -360,17 +409,32 @@ python aggregator.py
 | `GET` `DELETE` | `/api/jobs/{job_id}` | credit |
 | `GET` | `/api/jobs/{job_id}/results` | credit |
 | `GET` | `/api/jobs/{job_id}/csv` | credit |
+| `GET` `POST` | `/api/schedules` | credit |
+| `PUT` `DELETE` | `/api/schedules/{schedule_id}` | credit |
+| `POST` | `/api/schedules/{schedule_id}/toggle` | credit |
+| `POST` | `/api/schedules/{schedule_id}/run` | credit |
+| `GET` | `/api/schedules/preview` | credit |
 | `GET` | `/api/health` | credit |
 | `GET` | `/health` | 聚合层（WIPO 的三态健康检查） |
 
-`/api/check/status` 刻意**不带** `success` 外壳（credit 的三个接口同理沿用自己的契约）——
+`/api/check/status` 刻意**不带** `success` 外壳（credit 的接口同理沿用自己的契约）——
 这是为了不推翻两个模块已有的前端契约与回归断言。
+
+> **Swagger 分组**：`aggregator.py` 的 `openapi_tags` 声明了 7 组
+> （`trademarks` / `check` / `reports` / `io` / `jobs` / `schedules` / `system`）。
+> 漏声明不会报错，但 Swagger UI 会把未声明的 tag 排到最后、且没有描述 ——
+> `schedules` 就曾漏了两轮才发现（路由上写了 `tags=["schedules"]`，只是没在
+> `openapi_tags` 里声明）。
 
 ---
 
 ## 🔧 对模块源码的改动
 
-聚合系统**只改了两个文件**，都记在这里方便回溯。
+聚合系统对模块源码的改动**只有 3 处**（外加一个新增文件），都记在这里方便回溯。
+
+> 新增而非改动：`modules/credit/schedule.py`（287 行，定时巡检调度线程）
+> 与 `modules/credit/frontend/src/views/SchedulesView.vue` + `src/stores/schedules.ts`。
+> 这些是**新功能**，不是为了让合并成立而做的适配。
 
 ### 1. `modules/credit/api.py`：`app.state` → `request.app.state`
 
@@ -381,7 +445,7 @@ python aggregator.py
 而 lifespan 赋值的是新 app → `AttributeError: 'State' object has no attribute 'store'`。
 
 改动后 credit **独立运行行为不变**（自己的 lifespan 仍给 `credit_api.app.state` 赋值），
-它的 202 项回归全部通过。
+它的 254 项回归全部通过。
 
 ### 2. `modules/credit/frontend/src/router/index.ts`：路由 base 支持运行时覆盖
 
@@ -391,12 +455,30 @@ const ROUTER_BASE: string = window.__CREDIT_BASE__ ?? (ENV_BASE.startsWith('/') 
 export const router = createRouter({ history: createWebHistory(ROUTER_BASE), routes, ... })
 ```
 
-产物按默认 base 构建（服务独立部署），聚合层在返回 index.html 时注入
+产物按默认 base 构建（服务独立部署），模块被挂到子路径时由宿主注入
 `<script>window.__CREDIT_BASE__="/credit/"</script>`。这样**一份源码服务两种部署**，
-不需要为路由 base 维护两套构建配置。
+不需要为路由 base 维护两套构建配置。统一前端直接以 `/` 为 base，不需要注入。
 
-WIPO 前端**零改动**：它没有 vue-router，四个 section 靠 `.page.active` 显隐，
-与 URL 无关，所以子路径下天然工作。
+### 3. `modules/credit/credit_check.py`：Camoufox 的两个容器化必需改动
+
+```python
+_os = {"win32": "windows", "darwin": "macos", "linux": "linux"}[sys.platform]
+Camoufox(headless=not self.headful, locale="zh-CN", os=_os,
+         exclude_addons=[DefaultAddons.UBO])
+```
+
+- `os="windows"` 原本是**硬编码**：容器是 Linux，Camoufox 会按 Windows 资产名找
+  `camoufox.exe`，而实际装的是 `camoufox-bin`，启动必失败。改成按 `sys.platform`
+  推导后 Windows 行为不变。
+- `exclude_addons` 见上方 Dockerfile 注释：`addons=[]` 无效，因为
+  `add_default_addons` 会无条件把默认插件加回来；UBO 下载源返回 451 留下残缺目录，
+  之后每次启动抛 `InvalidAddonPath`。
+
+### 4. WIPO 前端：**零改动**
+
+它没有 vue-router，四个 section 靠 `.page.active` 显隐、与 URL 无关。
+统一前端把四个 section 原样搬进 `WipoHost.vue`（`v-show` 而非 `v-if`，保持常驻挂载），
+路由变化时只切 `.active` 类 —— 这也是它 118 项 E2E 一条都不用改的原因。
 
 ---
 
@@ -405,13 +487,13 @@ WIPO 前端**零改动**：它没有 vue-router，四个 section 靠 `.page.acti
 ### 质量门禁
 
 ```powershell
-# 1. 聚合层端到端（起 uvicorn + 真实 Chromium，41 项断言）
+# 1. 聚合层端到端（起 uvicorn + 真实 Chromium，76 项断言）
 python tools\accept_aggregated.py
 
 # 2. 三个回归套件（必须分开跑，conftest 同名会冲突）
 cd modules\wipo    ; python -m pytest tests -q               # 118 项 E2E
 cd modules\wipo    ; python -m pytest tests_new -q           # 44 项契约
-cd modules\credit  ; python -m pytest test_regression.py -q   # 202 项
+cd modules\credit  ; python -m pytest test_regression.py -q   # 254 项
 
 # 3. 自建断言（不经 pytest）
 cd modules\wipo    ; python verify_fixes.py                  # 68 项
@@ -420,11 +502,16 @@ cd modules\wipo    ; python verify_new_stack.py               # 63 项
 # 4. lint
 cd modules\wipo    ; ruff check app tests tests_new cli.py verify_fixes.py verify_new_stack.py
 cd modules\credit  ; python tools\run_ci_lint.py               # UTF-8 + PS1 BOM 两项检查
+
+# 5. 统一前端（独立工程）
+cd web             ; npm run typecheck && npm run build
 ```
 
-`tools\accept_aggregated.py` 覆盖：壳页两个入口、两个子路径、**深链刷新**、
-静态资源不串台、WIPO 新增商标 → 切页 → 表格计数、credit 提交作业 → 跳详情 →
-详情页刷新、跨模块跳转，并断言**全程 0 个 4xx/5xx**。
+`tools\accept_aggregated.py` 覆盖：统一前端首屏（左侧系统列表 / 侧栏几何 / 顶栏）、
+**UI 统一性**（主按钮 `rgb(79,70,229)`、卡片圆角 12px、侧栏深靛蓝渐变）、
+WIPO 新增商标 → 切页 → 表格计数、切到营业执照**不整页刷新且布局不跳变**、
+营业执照四页 + 定时巡检配置窗、提交作业 → 跳详情 → 详情页刷新、
+深链与旧地址 307、静态资源不串台，并断言**全程 0 个 4xx/5xx**。
 
 ### lint 的正确口径（别照抄「全绿」）
 
@@ -449,8 +536,12 @@ cd modules\credit  ; python tools\run_ci_lint.py               # UTF-8 + PS1 BOM
 | Job | 内容 | 矩阵 |
 |---|---|---|
 | `lint` | 聚合层 + WIPO 全源码 ruff（零容忍）；credit 测试文件 `--exit-zero` 出报告（19 项上游既有告警，只守「不再新增」） | 单版本 |
-| `tests` | credit 202 + WIPO 契约 44 + verify 68/63（**三套分开跑**，conftest 同名冲突） | Python 3.12 / 3.13（3.11 不进：`numpy==2.5.4` 声明 `Requires-Python>=3.12`，首跑实测装不上） |
-| `e2e` | 构建两套前端产物（`build_frontends.py`，node_modules 缺失自动 `npm ci`）→ WIPO E2E 118 → 聚合验收 41（真 Chromium） | Python 3.13 |
+| `tests` | credit 254 + WIPO 契约 44 + verify 68/63（**三套分开跑**，conftest 同名冲突） | Python 3.12 / 3.13（3.11 不进：`numpy==2.5.4` 声明 `Requires-Python>=3.12`，首跑实测装不上） |
+| `e2e` | 构建三套前端产物（`build_frontends.py`，node_modules 缺失自动 `npm ci`）→ WIPO E2E 118 → 聚合验收 76（真 Chromium） | Python 3.13 |
+
+> ⚠️ CI 的 e2e job 目前只装 Playwright chromium、不装 camoufox firefox，也**不跑
+> `web/` 的 typecheck**。统一前端一旦改坏，CI 只在「聚合验收」那 76 项里才会发现 ——
+> 所以本地改前端后务必先 `cd web; npm run typecheck && npm run build`。
 
 CI 与本地命令一一对应，口径见上面「质量门禁」。三个注意点：
 
@@ -476,16 +567,17 @@ CI 与本地命令一一对应，口径见上面「质量门禁」。三个注�
 
 | 能力 | 状态 |
 |---|---|
-| 单入口 + 两个模块子路径 | ✅ 壳页 2 个入口，深链刷新可用 |
-| 后端 router 合并 | ✅ 16 条路径 / 20 个 operation，零冲突 |
+| **统一前端**（一套 SPA + 左侧系统列表） | ✅ 切换不整页刷新、侧栏几何与 UI 令牌一致，76 项端到端覆盖 |
+| 后端 router 合并 | ✅ 21 条路径 / 27 个 operation，零冲突 |
 | lifespan 串联 | ✅ 顺序正确，关闭逆序 |
 | 统一错误外壳 | ✅ credit 的 `{"detail"}` 自动包装 |
 | 请求级 request_id | ✅ 响应头与体一致，上游可透传；**未处理异常（500）路径也已保留**（ef9a22b，`scope["state"]` 兜底 + 500 契约测试） |
 | 根级 `.github/` CI | ✅ lint / tests 3.12+3.13 / E2E 三 job，run 39191075156 全绿 |
-| 两套前端产物 | ✅ `dist` + `dist-agg`，构建脚本带自检 |
+| 模块仍可独立部署 | ✅ 每模块 `dist` + `dist-agg` 两套产物，构建脚本带自检 |
+| **Docker 容器化** | ✅ 91 上 `docker compose up -d` 三容器（app / mysql / camoufox-init）全 healthy，真实巡检作业端到端跑通 |
 | 数据库分库 | ✅ 真 MySQL 8.4.9 端到端跑通（WIPO + credit 各一库） |
 | 数据库分表 | ✅ 同库 5 表也跑通（表名零交集） |
-| credit 支持 MySQL | ✅ 同一个 `CREDIT_DB` 变量两形态，202 项回归覆盖 |
+| credit 支持 MySQL | ✅ 同一个 `CREDIT_DB` 变量两形态，254 项回归覆盖 |
 | 共用 venv | ✅ fastapi 0.143.0 + playwright 1.62.0 + camoufox 0.4.11 实测共存 |
 
 ### ⏳ 待开发
@@ -493,6 +585,7 @@ CI 与本地命令一一对应，口径见上面「质量门禁」。三个注�
 | 项 | 说明 |
 |---|---|
 | 聚合层 pytest 契约测试 | 现在只有 `accept_aggregated.py`（要浏览器，不适合 CI） |
+| CI 覆盖统一前端 | `web/` 的 typecheck 与 build 尚未进 CI（见上方警告） |
 | `modules/` 改 submodule | 现在手工同步上游 |
 | credit 上游的 lint 基线 | 85 项既有告警，接管前应定基线 |
 | 架构演进 | 见 `docs/架构演进路线.md`（P1–P4 分期：契约测试 → submodule → 横向扩展 → 可观测） |
@@ -501,7 +594,10 @@ CI 与本地命令一一对应，口径见上面「质量门禁」。三个注�
 
 - **单进程绑定**：`--workers 1`。要横向扩就先把 credit 的队列外置（Redis 之类），
   并把 WIPO 的 `check_runs` 单行状态机改成带实例标识的模型。
-- **`dist-agg/` 不入库**：忘了构建就跑，整站 404（不是白屏 —— `SPAFiles` 会先确认 index.html 存在）。
+- **多份 Vue 运行时**：三个前端工程各有 node_modules，`web/vite.config.ts` 的
+  `resolve.dedupe` 是**必需项而非优化**。删掉它，生产构建立刻白屏（dev 不报错）。
+- **`web/dist` 与 `dist-agg/` 不入库**：忘了构建就跑，整站 404（不是白屏 ——
+  `SPAFiles` 会先确认 index.html 存在）。
 - **`modules/` 是快照**：与上游仓库会产生漂移，目前没有自动检测。
 - **行尾与编码**：`modules/credit/install_schedule_task.ps1` 必须 UTF-8 **带 BOM**，
   它生成的 `.bat` 必须 **无 BOM + 全 CRLF**；`modules/wipo/.gitattributes` 已声明 `* text=auto eol=lf`，
@@ -510,7 +606,11 @@ CI 与本地命令一一对应，口径见上面「质量门禁」。三个注�
 - **全新克隆先构建再跑 credit 回归**：`test_legacy_unprefixed_paths_are_not_api` 依赖
   `frontend/dist` 存在（无 dist 时 SPA 兜底不挂载，`/health` 落到 FastAPI 默认 404 → 回 JSON）。
   这是上游既有行为；WIPO 侧同类测试是优雅 skip，两模块在这一点上不一致。
-- **credit 的 Camoufox 依赖真实浏览器**：容器部署要先 `python -m camoufox fetch`。
+- **credit 的 Camoufox 依赖真实浏览器**：容器部署要用 `tools/install_camoufox.py`
+  离线安装（目标网络到 github.com 不通，`camoufox fetch` 必失败）。
+- **调度线程与开发机旧计划任务会重复巡检**：开发机上的
+  `CreditChina-LicenseCheck` 计划任务（指向旧仓库 `reverse-records\run_credit_check.bat`）
+  与容器内 scheduler 都是每日 09:00，同时启用会跑两遍。
 
 ---
 
@@ -519,12 +619,16 @@ CI 与本地命令一一对应，口径见上面「质量门禁」。三个注�
 | 文档 | 内容 |
 |---|---|
 | [`README.md`](README.md) | 本文：入口、架构、部署、门禁 |
+| [`docs/Docker部署手册.md`](docs/Docker部署手册.md) | **容器化部署**：三阶段镜像、八个关键决策、91 上实测记录、AGG_HOST vs AGG_BIND、Camoufox 离线安装、排障 |
+| [`docs/UBT-docker-部署可行性.md`](docs/UBT-docker-部署可行性.md) | 容器化可行性论证：三个硬阻塞（真实浏览器 / 单进程 / 前端构建）与环境实测 |
 | [`docs/单前端双后端整合评估.md`](docs/单前端双后端整合评估.md) | 合并方案的设计依据：三种整合形态实测、前端子路径的三个硬性前提、分库 vs 分表、342 项回归、文件级改造清单、风险与规避 |
+| [`docs/迁移验证报告.md`](docs/迁移验证报告.md) | 133 项断言的历史迁移验证（前端 / 接口 / 数据库 / 架构四层） |
+| [`docs/架构演进路线.md`](docs/架构演进路线.md) | P1–P4 分期：契约测试 → submodule → 横向扩展 → 可观测 |
 | [`modules/wipo/README.md`](modules/wipo/README.md) | WIPO 模块：能力边界、环境变量、三种运行方式、测试策略、常见问题 |
 | [`modules/wipo/docs/API_DOC.md`](modules/wipo/docs/API_DOC.md) | WIPO 接口契约 |
 | [`modules/wipo/docs/PROJECT_STRUCTURE.md`](modules/wipo/docs/PROJECT_STRUCTURE.md) | WIPO 分层结构与依赖方向 |
 | [`modules/credit/README-营业执照巡检.md`](modules/credit/README-营业执照巡检.md) | credit 模块：判定口径、验证码策略、定时巡检、合规边界、实测记录 |
-| [`modules/credit/docs/API_DOC.md`](modules/credit/docs/API_DOC.md) | credit 接口契约 |
+| [`modules/credit/docs/API_DOC.md`](modules/credit/docs/API_DOC.md) | credit 接口契约（含 `/api/schedules` 七条调度接口） |
 
 ---
 
@@ -535,8 +639,8 @@ CI 与本地命令一一对应，口径见上面「质量门禁」。三个注�
 - WIPO → [DoonaSuzy/WIPO_and_Brand](https://github.com/DoonaSuzy/WIPO_and_Brand)
 - credit → [DoonaSuzy/Business-License](https://github.com/DoonaSuzy/Business-License)
 
-聚合层（`aggregator.py`、`credit_api_glue.py`、`tools/`）的改动请提在本仓库。
-提 PR 前跑一遍[质量门禁](#-质量门禁)里的四条命令。
+聚合层（`aggregator.py`、`credit_api_glue.py`、`tools/`）与统一前端（`web/`）
+的改动请提在本仓库。提 PR 前跑一遍[质量门禁](#-质量门禁)里的五条命令。
 
 ## 📄 许可
 

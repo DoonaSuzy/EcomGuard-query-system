@@ -1,0 +1,30 @@
+{
+  "name": "aggregated-web",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "统一监控平台前端 — 一套壳、一套设计语言，两个业务系统（WIPO 商标监控 / 营业执照状态巡检）",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "typecheck": "vue-tsc --noEmit",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@vueuse/core": "^15.0.0",
+    "openapi-fetch": "^0.17.0",
+    "pinia": "^4.1.0",
+    "vue": "^3.5.44",
+    "vue-router": "^4.6.4"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.5",
+    "@vitejs/plugin-vue": "^6.0.10",
+    "typescript": "^5.9.3",
+    "vite": "^7.3.7",
+    "vue-tsc": "^3.3.13"
+  },
+  "allowScripts": {
+    "esbuild@0.28.2": true
+  }
+}
