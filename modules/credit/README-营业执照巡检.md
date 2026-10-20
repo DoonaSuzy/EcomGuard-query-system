@@ -45,7 +45,7 @@ cd ..
 
 ```bash
 # 0) 激活本目录的独立环境（不要用系统 Python）
-cd F:\projects\GO1\reverse-records
+cd modules/credit    # 本模块目录（聚合适配后源码在此）
 .\.venv\Scripts\Activate.ps1        # 或直接用绝对路径调用，见下
 
 # 1) 准备名单（每行一个企业全称，# 开头为注释）
@@ -61,7 +61,7 @@ python notify.py result.csv --webhook "https://qyapi.weixin.qq.com/cgi-bin/webho
 不想激活环境就全程用绝对路径：
 
 ```powershell
-$py = 'F:\projects\GO1\reverse-records\.venv\Scripts\python.exe'
+$py = '<项目目录>\.venv\Scripts\python.exe'
 & $py credit_check.py companies.txt -o result.csv
 & $py notify.py result.csv --webhook "https://..."
 ```
@@ -72,9 +72,9 @@ $py = 'F:\projects\GO1\reverse-records\.venv\Scripts\python.exe'
 
 | 项 | 值 |
 | --- | --- |
-| Python | `F:\projects\GO1\reverse-records\.venv\Scripts\python.exe` |
+| Python | `<项目目录>\.venv\Scripts\python.exe` |
 | 依赖 | `camoufox`、`ddddocr`、`Pillow`，以及 HTTP 接口用的 `fastapi`/`uvicorn`（版本锁定见 `requirements.txt`，41 条） |
-| 工作目录 | `F:\projects\GO1\reverse-records` |
+| 工作目录 | `modules/credit` |
 | 回归测试 | `.venv\Scripts\python.exe -m pytest test_regression.py -q`（180 项，离线） |
 
 > **本目录自带独立 venv，不要用系统 Python 或别的项目的 venv 跑。**
@@ -84,7 +84,7 @@ $py = 'F:\projects\GO1\reverse-records\.venv\Scripts\python.exe'
 从零重建环境：
 
 ```powershell
-cd F:\projects\GO1\reverse-records
+cd modules/credit    # 本模块目录（聚合适配后源码在此）
 & 'C:\Users\10911\AppData\Local\Programs\Python\Python313\python.exe' -m venv .venv
 & '.\.venv\Scripts\python.exe' -m pip install -r requirements.txt `
     -i https://pypi.tuna.tsinghua.edu.cn/simple --timeout 60 --retries 3
@@ -208,7 +208,7 @@ cd F:\projects\GO1\reverse-records
 ### 方式 A（推荐）：一键注册计划任务
 
 ```powershell
-cd F:\projects\GO1\reverse-records
+cd modules/credit    # 本模块目录（聚合适配后源码在此）
 
 # 1) 先看会做什么，不改系统
 .\install_schedule_task.ps1 -Action DryRun -Webhook "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=xxx"
@@ -260,8 +260,8 @@ Task Scheduler **不会顺延**到下月 1 日，而是整月静默不触发—�
 ### 方式 B：手工命令
 
 ```powershell
-$py = 'F:\projects\GO1\reverse-records\.venv\Scripts\python.exe'
-$dir = 'F:\projects\GO1\reverse-records'
+$py = '<项目目录>\.venv\Scripts\python.exe'
+$dir = 'modules/credit'
 cd $dir
 & $py credit_check.py companies.txt -o "result_$(Get-Date -f yyyyMMdd).csv"
 & $py notify.py "result_$(Get-Date -f yyyyMMdd).csv" --webhook "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=xxx"
@@ -320,7 +320,7 @@ cd $dir
 代码已就绪，**只需填凭据**——凭据只写进 `.env`，该文件已在 `.gitignore` 里，不会入库。
 
 ```powershell
-cd F:\projects\GO1\reverse-records
+cd modules/credit    # 本模块目录（聚合适配后源码在此）
 Copy-Item .env.example .env
 notepad .env      # 改 SMTP_USER / SMTP_PASS / MAIL_TO 三行
 ```
@@ -355,7 +355,7 @@ notepad .env      # 改 SMTP_USER / SMTP_PASS / MAIL_TO 三行
 **它不替代脚本**——内部还是同一个 `credit_check.py`，只是把"提交名单"变成一次 HTTP 调用。
 
 ```powershell
-cd F:\projects\GO1\reverse-records
+cd modules/credit    # 本模块目录（聚合适配后源码在此）
 .\.venv\Scripts\python.exe -m uvicorn api:app --host 127.0.0.1 --port 8000
 ```
 
@@ -503,7 +503,7 @@ npx openapi-typescript openapi.json --default-non-nullable false -o src/types.d.
 | `samples/expected_actual.csv` | 50 条实测结果（与 `cases.csv` 预期 50/50 一致） |
 | `.github/workflows/ci.yml` | GitHub Actions：`windows-latest`/`ubuntu-latest` × Python 3.12/3.13 跑 189 项离线测试，另有 lint job 做语法/编码/BOM/`.env` 检查 |
 | `companies.txt` | **你的企业名单（需自建）**：纯文本，一行一家全称，`#` 开头为注释 |
-| `batch8.txt` | 名单格式样例（8 家，可直接复制改） |
+| `samples/companies50.txt` | 名单样例（50 家，可直接复制改；63 家正式名单见 `巡检名单.json`） |
 | `bench_captcha.py` | 验证码识别率基准 |
 | `bench_ocr_variants.py` | OCR 预处理 A/B |
 | `请求链路.md` | 逆向取证：请求契约 / 验证码闸门 / 字段来源 |
@@ -511,7 +511,7 @@ npx openapi-typescript openapi.json --default-non-nullable false -o src/types.d.
 | `瑞数逆向分析技术报告.md` | 瑞数风控层技术报告（架构 / 绕过 / 解密 / 调试 / 合规） |
 | `项目分析报告-信用中国营业执照巡检.md` | 需求满足度与工程完备性分析 |
 | `captcha-sample.png` | 验证码样本（8 倍放大二值化） |
-| `final_selftest.csv` / `batch8_result2.csv` | 自测与实测输出 |
+| `samples/expected_actual.csv` | 50 家实测输出（cases.csv 的实际巡检结果） |
 
 运行期自动生成（已在 `.gitignore` 中）：`run_credit_check.bat`、`logs/`、`result_*.csv`、`.venv/`。
 
@@ -539,7 +539,7 @@ npx openapi-typescript openapi.json --default-non-nullable false -o src/types.d.
 | 批次 | 规模 | 耗时 | 结果 |
 | --- | --- | --- | --- |
 | `--selftest` | 4 家 | 36.2 s | 2 正常 / 2 未收录 |
-| `batch8.txt` | 8 家 | 89.7 s | 6 正常 / 2 未知（名称不完整） |
+| `batch8.txt`（历史批次文件，已清理） | 8 家 | 89.7 s | 6 正常 / 2 未知（名称不完整） |
 | 计划任务 `RunNow` | 3 家 | 29.0 s | 2 正常 / 1 未收录；验证码第 1 次通过 |
 | 计划任务 `RunNow`（无 webhook） | 3 家 | 79.8 s | 2 正常 / 1 未收录；`credit_check=0`、`notify=10` → 整体 `0` |
 | **`samples/companies50.txt`** | **50 家** | **469.0 s** | **28 正常 / 9 未收录 / 12 待复核 / 1 状态异常** |
@@ -579,8 +579,8 @@ E-特殊主体 5 / F-边缘案例 3 / G-危机但主体存续 6。
 
 ```bash
 python credit_check.py --selftest -o final_selftest.csv
-python credit_check.py batch8.txt -o batch8_result2.csv
-python notify.py batch8_result2.csv
+python credit_check.py samples/companies50.txt -o result.csv
+python notify.py result.csv
 python notify.py final_selftest.csv --webhook <你的群机器人地址>
 
 # 50 条样例（约 8 分钟）
@@ -598,7 +598,7 @@ python credit_check.py samples/companies50.txt -o samples/expected_actual.csv
 ## 11. 回归测试
 
 ```powershell
-cd F:\projects\GO1\reverse-records
+cd modules/credit    # 本模块目录（聚合适配后源码在此）
 .\.venv\Scripts\python.exe -m pytest test_regression.py -q
 ```
 

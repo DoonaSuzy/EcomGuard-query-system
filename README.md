@@ -17,7 +17,7 @@
 | **WIPO 商标监控** | `/input` `/list` `/check` `/reports` | 商标法律状态与疑似抢注批量检查、月度报告归档、异常通知 | [WIPO_and_Brand](https://github.com/DoonaSuzy/WIPO_and_Brand) |
 | **营业执照巡检** | `/overview` `/submit` `/schedules` `/jobs` | 信用中国企业登记状态批量查询（存续 / 注销 / 吊销）、CSV 交付、异常推送 | [Business-License](https://github.com/DoonaSuzy/Business-License) |
 
-两个模块的完整源码放在 `modules/` 下，**保持各自仓库原样**（累计只改了 2 个文件，见[对模块源码的改动](#-对模块源码的改动)）。
+两个模块的完整源码放在 `modules/` 下，**保持各自仓库原样**（聚合适配只动了 3 处，见[对模块源码的改动](#-对模块源码的改动)）。
 聚合层是根目录的 `aggregator.py` + `credit_api_glue.py` + `docker_entrypoint.py`，约 337 行。
 
 **现状一览**（2026-10-20 实测）：
@@ -31,7 +31,7 @@
 | 自建断言脚本 | **131 项**（68 + 63） |
 | 聚合层端到端 | **76 项**（真 Chromium，全程 0 个 4xx/5xx） |
 | 统一 API | **21 条唯一路径 / 27 个 operation**（零冲突） |
-| 数据库表 | **6 张**（`trademarks` / `reports` / `check_runs` / `jobs` / `results` / `schedules`） |
+| 数据库表 | **7 张**（WIPO：`trademarks` / `reports` / `check_runs`；credit：`jobs` / `results` / `schedules` + 内部标记表 `meta`） |
 | 前端产物 | **5 套**（统一前端 1 套 + 每模块 2 套：独立运行 + 子路径托管） |
 
 > **代码量口径**（可复现，生产与测试**分开计**，避免把测试行数混进"代码量"）：
@@ -206,13 +206,14 @@ aggregated-system/
 │   ├── build_frontends.py     构建三套前端产物（统一前端 + 每模块 dist/dist-agg）
 │   ├── accept_aggregated.py   端到端验收（起 uvicorn + 真 Chromium，76 项断言）
 │   ├── credit_lint_baseline.py credit 的 lint 基线守卫（只拦新增，不清零）
-│   ├── credit_lint_baseline.json 上面那个脚本的基线快照（31 个（文件, 规则）组合 / 58 条）
+│   ├── credit_lint_baseline.json 上面那个脚本的基线快照（39 个（文件, 规则）组合 / 69 条）
 │   └── install_camoufox.py    离线安装 Camoufox 浏览器（目标网络到 GitHub 不通）
 ├── docs/
 │   ├── 单前端双后端整合评估.md   合并方案的设计依据（三形态实测、改造清单、风险）
 │   ├── Docker部署手册.md        91 上的部署、升级、排障
 │   ├── 巡检名单.md              63 家巡检名单 + 每家的实测登记状态
-│   └── UBT-docker-部署可行性.md 容器化可行性取证（依赖、网络、阻塞项）
+│   ├── UBT-docker-部署可行性.md 容器化可行性取证（依赖、网络、阻塞项）
+│   └── archive/wipo-github/     WIPO 模块旧带的嵌套 .github（GitHub 只认仓库根，永不执行，归档留证）
 └── modules/
     ├── wipo/                  完整 WIPO 模块（自带 tests/、tests_new/、web/、docs/）
     │   ├── app/               新栈 FastAPI（core / api/v1 / models / repositories / services）
@@ -543,7 +544,7 @@ CI 的 lint job 就是上面三条的组合，零容忍。
 
 | Job | 内容 | 矩阵 |
 |---|---|---|
-| `lint` | 聚合层 + WIPO 全源码 ruff（零容忍）；credit 走 `tools/credit_lint_baseline.py` 基线守卫——58 条既有债务不拦门，**新增任何一条就红** | 单版本 |
+| `lint` | 聚合层 + WIPO 全源码 ruff（零容忍）；credit 走 `tools/credit_lint_baseline.py` 基线守卫——69 条既有债务不拦门，**新增任何一条就红** | 单版本 |
 | `tests` | credit 278 + WIPO 契约 44 + verify 68/63（**三套分开跑**，conftest 同名冲突） | Python 3.12 / 3.13（3.11 不进：`numpy==2.5.4` 声明 `Requires-Python>=3.12`，首跑实测装不上） |
 | `e2e` | `web/` typecheck（`npm ci` + `vue-tsc`）→ 构建三套前端产物（`build_frontends.py`，node_modules 缺失自动 `npm ci`）→ WIPO E2E 118 → 聚合验收 76（真 Chromium） | Python 3.13 + Node 22 |
 

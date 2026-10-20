@@ -1,14 +1,14 @@
 # 聚合系统 —— 两个模块运行依赖的并集
 #
 # 这套版本组合已实测：在本机单 venv 里同时跑通
-#   WIPO      110 项 E2E + 43 项契约 + 68 项缺陷回归断言
-#   营业执照   201 项回归
-#   聚合层     37 项端到端（真实 Chromium）
+#   WIPO      118 项 E2E + 44 项契约 + 68 项缺陷回归断言 + 63 项新栈断言
+#   营业执照   278 项回归
+#   聚合层     76 项端到端（真实 Chromium）
 #
 # 冲突处理（两个模块各自 requirements.txt 不一致的地方）：
 #
 #   fastapi   WIPO 要 0.143.0，营业执照写的是 0.118.3
-#             → 取 0.143.0。营业执照的 201 项回归在 0.143.0 上全绿。
+#             → 取 0.143.0。营业执照的 278 项回归在 0.143.0 上全绿。
 #
 #   pydantic  WIPO 要 2.14.0，营业执照写 2.14.1
 #             → 取 2.14.0。两者互相兼容，2.14.1 只是补丁版本。
@@ -18,7 +18,7 @@
 #               裸依赖（`playwright`），实测 1.62.0 下 camoufox 正常工作。
 #
 #   浏览器   WIPO 的 E2E 用 playwright 自带 chromium（需 `playwright install chromium`）
-#             营业执照的铁检用 camoufox 自带的 firefox（需 `camoufox fetch`）
+#             营业执照的巡检用 camoufox 自带的 firefox（需 `camoufox fetch`）
 #             → 两者互不影响，各装各的。
 #
 # 安装：

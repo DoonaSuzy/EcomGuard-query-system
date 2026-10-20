@@ -21,7 +21,7 @@ cd F:\projects\GO1\reverse-records
 .\.venv\Scripts\Activate.ps1
 
 # 1) 准备名单：一行一家企业全称，# 开头为注释
-Copy-Item batch8.txt companies.txt
+Copy-Item samples\companies50.txt companies.txt
 
 # 2) 批量查询
 python credit_check.py companies.txt -o result.csv
@@ -60,9 +60,9 @@ python notify.py result.csv --webhook "https://qyapi.weixin.qq.com/cgi-bin/webho
 
 | 项 | 状态 |
 | --- | --- |
-| 回归测试 | 186 项全离线，约 6 s（`pytest test_regression.py -q`） |
+| 回归测试 | 278 项全离线，约 36 s（`pytest test_regression.py -q`） |
 | CI | GitHub Actions：2 OS × 2 Python 跑离线测试 + 编码/BOM/凭据泄漏检查 |
-| 依赖 | 运行时 41 条全 `==` 锁定；CI 只装 `requirements-dev.txt` |
+| 依赖 | 运行时 42 条全 `==` 锁定；CI 只装 `requirements-dev.txt` |
 | 定时任务 | `install_schedule_task.ps1`（Windows 计划任务，默认注册**每日 + 每月**双触发器，无需管理员） |
 | 告警通道 | 企业微信群机器人 / SMTP 邮件（QQ·163·企业邮）/ 仅打印 |
 | 服务自检 | `healthcheck.py` 12 项探针，异常并入日报正文 |

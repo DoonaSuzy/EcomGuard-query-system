@@ -10,7 +10,7 @@
 全局 CSS（同名类 .page/.btn/.card/.badge/.toast）不再同页共存，因此不再需要
 iframe 隔离，也不再有「切换系统时整页样式跳变」。两个模块的前端源码没有被
 复制或重写 —— 它们作为「页面包」被 web/ 用 Vite 别名引用（@wipo、@），
-各自仍能独立构建与独立跑回归（见 docs/统一前端方案.md）。
+各自仍能独立构建与独立跑回归（见 docs/单前端双后端整合评估.md）。
 
 构建命令：`python tools/build_frontends.py`（一次建三套：web/dist 统一产物，
 外加两个模块各自的 dist 与 dist-agg 供模块独立运行/回归使用）。

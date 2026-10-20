@@ -293,8 +293,8 @@ python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 1
 混跑会报 `ImportError: cannot import name 'FAKE_REPORT' from 'conftest'`）。
 
 ```bash
-python -m pytest tests -q          # E2E，110 项，约 45 秒（真实 Chromium）
-python -m pytest tests_new -q      # 契约 + 服务层，43 项，约 5 秒
+python -m pytest tests -q          # E2E，118 项，约 46 秒（真实 Chromium）
+python -m pytest tests_new -q      # 契约 + 服务层，44 项，约 5 秒
 ```
 
 Windows 可双击 `run_tests.bat`（自动检查依赖与 Chromium）。
@@ -379,7 +379,7 @@ python verify_new_stack.py         # 63 项，FastAPI 栈契约回归
 ```
 
 > 只有 `GET /api/check/status` 与 `GET /api/export` 不走外壳（前端直接读裸对象 / 触发下载）。
-> 改这个外壳会一次性打断前端 4 处 `result.success` 判断与 110 项 E2E。
+> 改这个外壳会一次性打断前端 4 处 `result.success` 判断与 118 项 E2E。
 
 ### 文档
 
@@ -447,7 +447,7 @@ WIPO_and_Brand/
 ├── cryptojs_aes.py               # CryptoJS 兼容 AES
 ├── main.py cli.py                # CLI 入口
 ├── install_schedule_task.ps1     # 注册每月计划任务
-├── tests/ tests_new/             # E2E 110 项 / 契约 43 项
+├── tests/ tests_new/             # E2E 118 项 / 契约 44 项
 ├── docs/                         # API 文档 + 契约 schema + 文档站
 ├── scripts/                      # 依赖一致性检查等辅助脚本
 ├── verify_fixes.py verify_new_stack.py   # 缺陷回归断言
