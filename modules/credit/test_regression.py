@@ -301,7 +301,7 @@ class TestNotifyReport:
         # （每一家都列），不限范围会把清单里的行算进来。
         seg = md.split("**需关注主体**", 1)[1].split("**需人工复核**", 1)[0]
         table_rows = [ln for ln in seg.splitlines()
-                      if ln.startswith("| 公司") or ln.startswith("| 甲")]
+                      if ln.startswith(("| 公司", "| 甲"))]
         assert len(table_rows) == 1, f"异常表应只有 alert 一行，实际 {table_rows}"
 
     # ---- 全部主体清单（「邮件里看不到企业名称」的回归） ----
@@ -323,7 +323,7 @@ class TestNotifyReport:
         _, md, _ = build_report(rows)
         seg = md.split("**全部主体清单**", 1)[1]
         data = [ln for ln in seg.splitlines()
-                if ln.startswith("| 公司") or ln.startswith("| 甲")]
+                if ln.startswith(("| 公司", "| 甲"))]
         assert len(data) == 5, f"清单应含 5 家，实际 {len(data)}：{data}"
 
     def test_roster_sorts_abnormal_before_normal(self):
@@ -332,7 +332,7 @@ class TestNotifyReport:
         _, md, _ = build_report(self._rows(["ok", "alert", "notfound", "unknown"]))
         seg = md.split("**全部主体清单**", 1)[1]
         data = [ln for ln in seg.splitlines()
-                if ln.startswith("| 公司") or ln.startswith("| 甲")]
+                if ln.startswith(("| 公司", "| 甲"))]
         # 输入顺序 公司0=ok 公司1=alert 公司2=notfound 公司3=unknown
         assert data[0].startswith("| 公司1 |")   # alert
         assert data[1].startswith("| 公司2 |")   # notfound
@@ -349,7 +349,7 @@ class TestNotifyReport:
         # 未收录行用 "-" 占位，不允许出现空列。
         # 只取清单段内的行：需关注表是 4 列，清单表才是这里要验的 5 列。
         seg = md.split("**全部主体清单**", 1)[1]
-        body = [ln for ln in seg.splitlines() if ln.startswith("| 公司")][0]
+        body = next(ln for ln in seg.splitlines() if ln.startswith("| 公司"))
         assert body.count("|") == 6, f"五列表格应有 6 个分隔符：{body}"
 
     def test_roster_survives_html_rendering(self):

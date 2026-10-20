@@ -37,7 +37,7 @@ import threading
 import time
 import urllib.parse
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
 
@@ -528,7 +528,7 @@ CREATE TABLE IF NOT EXISTS schedules (
 
 
 def _now() -> str:
-    return datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds")
+    return datetime.now(UTC).astimezone().isoformat(timespec="seconds")
 
 
 def _parse_mysql_url(url: str) -> dict[str, Any]:
@@ -886,7 +886,7 @@ class Store:
         内时钟被校正），``next_run_at`` 是按传入 now 正推的、``last_run_at`` 却是
         真实时间，就会出现 next_run_at 早于 last_run_at 的诡异状态。
         """
-        marker = now or datetime.now(timezone.utc).astimezone()
+        marker = now or datetime.now(UTC).astimezone()
         marker_s = marker.astimezone().isoformat(timespec="seconds")
         if advance_marker:
             sql = ("UPDATE schedules SET next_run_at=?, last_run_at=?, updated_at=? "
