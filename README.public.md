@@ -1,7 +1,8 @@
-# 聚统 · Aggregated Query & Inspection System（公开演示版）
+# 电商合规核查平台 · EcomGuard（公开演示版）
 
-> 把两个原本独立部署的系统合成**一个服务入口**：一份 OpenAPI、一个进程、两个功能模块。
-> 前端是**一套统一的 SPA**（左侧系统列表切换两个子系统），不再是两个各跑各的界面。
+> 一套服务底座 + 两个开箱即用的检查器：**品牌检查**（商标法律状态与疑似抢注）与
+> **商户检查**（营业执照登记状态巡检）。
+> 一份 OpenAPI、一个进程、一套统一前端，加新检查器只需在侧栏登记一项。
 
 **⚠️ 公开演示版声明**：本仓库是项目的**演示/教学版**。以下内容**未包含**在本仓库中，属于私有部分：
 企业级部署配置与生产环境参数、真实巡检企业名单、品牌方数据与商标监控样本、
@@ -16,12 +17,14 @@
 
 ## 📖 项目概述
 
-| 模块 | 前端路由 | 做什么 |
-|---|---|---|
-| **商标监控（WIPO）** | `/input` `/list` `/check` `/reports` | 商标法律状态与疑似抢注批量检查、月度报告归档、异常通知 |
-| **营业执照巡检（credit）** | `/overview` `/submit` `/schedules` `/jobs` | 企业登记状态批量查询（存续 / 注销 / 吊销）、CSV 交付、异常推送 |
+平台内置两个检查器，覆盖电商经营里最常见的两类合规资质：
 
-两个模块的完整源码放在 `modules/` 下。聚合层是根目录的
+| 检查器 | 前端路由 | 查什么 |
+|---|---|---|
+| **品牌检查**（`wipo`） | `/input` `/list` `/check` `/reports` | 商标法律状态与疑似抢注批量检查、月度报告归档、异常通知 |
+| **商户检查**（`credit`） | `/overview` `/submit` `/schedules` `/jobs` | 企业登记状态批量查询（存续 / 注销 / 吊销）、CSV 交付、异常推送 |
+
+两个检查器的完整源码放在 `modules/` 下。服务底座是根目录的
 `aggregator.py` + `credit_api_glue.py` + `docker_entrypoint.py`，约 337 行。
 
 **现状一览**（实测口径，复现命令见[开发](#-开发)一节）：
@@ -30,7 +33,7 @@
 |---|---|
 | Python 代码（生产 / 测试分开计） | 10,833 / 6,524 非空行 |
 | 自动化测试 | 440 项（278 + 118 + 44） |
-| 聚合层端到端 | 76 项（真 Chromium，全程 0 个 4xx/5xx） |
+| 服务底座端到端 | 76 项（真 Chromium，全程 0 个 4xx/5xx） |
 | 统一 API | 21 条唯一路径 / 27 个 operation（零冲突） |
 | 数据库表 | 7 张（`trademarks`/`reports`/`check_runs` + `jobs`/`results`/`schedules` + `meta`） |
 | 前端产物 | 统一前端 1 套 + 每模块独立/子路径各 2 套 |
@@ -43,22 +46,22 @@
 
 ## ✨ 核心设计（本项目的主要技术亮点）
 
-### 1. 统一前端：双 SPA 合并为一个壳
+### 1. 统一前端：一套底座承载多个检查器
 
-原本两个模块各有一套 Vue 应用、各跑各的界面。`web/` 用**别名导入**把两模块的
-页面组件当包引入，外面包一层壳（侧边栏 + `<iframe>`/路由切换），做到：
+`web/` 用**别名导入**把两个检查器的页面组件当包引入，外面包一层壳
+（侧栏 + 路由切换），做到：
 
-- 一套 UI 令牌（`web/src/styles/reconcile.css`）把两模块 5 个同名全局类
+- 一套 UI 令牌（`web/src/styles/reconcile.css`）把两个检查器 5 个同名全局类
   （`.page` / `.btn` / `.card` / `.badge` / `.toast`）隔离开，互不覆盖；
 - `vite.config.ts` 里 `resolve.dedupe` 保证双 Vue 运行时合并为一份
   （否则页面白屏，报 `Cannot read properties of undefined (reading '_s')`——这是实测踩过的坑）；
-- 深链直开：`/#/wipo` `/#/credit` 直接落到对应子系统，浏览器刷新不丢状态。
+- 深链直开：`/#/wipo` `/#/credit` 直接落到对应检查器，浏览器刷新不丢状态。
 
 ### 2. 接口解耦：一个进程、一份 OpenAPI、零冲突
 
-聚合层用 FastAPI `include_router` 把两模块的 21 条路径合成**一份 OpenAPI**，
-零路径冲突；credit 模块的 `app.state` 已从模块级重构为 `request.app.state`，
-消除了合并时的硬阻塞。
+服务底座用 FastAPI `include_router` 把两个检查器的 21 条路径合成**一份 OpenAPI**，
+零路径冲突；商户检查器的 `app.state` 已从模块级重构为 `request.app.state`，
+消除了接入底座时的硬阻塞。
 
 ### 3. 两级巡检调度（内建调度器，不依赖外部 crontab）
 
@@ -101,7 +104,7 @@
                   └───────┬─────────────┬───────┘
                           │             │
               ┌───────────▼───┐   ┌─────▼──────────┐
-              │ WIPO 模块      │   │ credit 模块     │
+              │ 品牌检查器     │   │ 商户检查器     │
               │ /api/trademarks│  │ /api/jobs 等    │
               └───────┬───────┘   └─────┬──────────┘
                       │                 │
@@ -114,16 +117,16 @@
 
 ```text
 .
-├── aggregator.py            # 聚合层入口（create_app / combined_lifespan）
-├── credit_api_glue.py       # credit 路由聚合适配
+├── aggregator.py            # 服务底座入口（create_app / combined_lifespan）
+├── credit_api_glue.py       # 检查器路由挂载适配
 ├── docker_entrypoint.py     # 容器启动脚本
 ├── Dockerfile               # 三阶段构建（前端→依赖→运行时）
 ├── docker-compose.yml       # app / mysql / camoufox-init
 ├── .env.docker.example      # 环境变量模板（复制为 .env.docker 后填值）
 ├── web/                     # 统一前端（Vue 3 + Vite）
 ├── modules/
-│   ├── wipo/                # 商标监控模块（app/ + docs/ + scripts/）
-│   └── credit/              # 营业执照巡检模块
+│   ├── wipo/                # 品牌检查器（app/ + docs/ + scripts/）
+│   └── credit/              # 商户检查器
 ├── tools/                   # build_frontends / accept_aggregated 等
 └── .github/workflows/ci.yml # CI
 ```
@@ -189,14 +192,14 @@ python aggregator.py            # 默认 http://127.0.0.1:8000
 
 ## 🔌 统一接口
 
-合并后的 OpenAPI 包含 **21 条唯一路径 / 27 个 operation**，零路径冲突：
+统一的 OpenAPI 包含 **21 条唯一路径 / 27 个 operation**，零路径冲突：
 
 | 分组 | 代表接口 |
 |---|---|
-| `trademarks`（WIPO） | 批量提交检查、查询结果、导出报告 |
-| `check` / `reports` / `io`（WIPO） | 检查执行、月度报告、导入导出 |
-| `jobs`（credit） | 巡检作业提交/查询/取消 |
-| `schedules`（credit） | 定时巡检的增删改查、手动触发、预览 |
+| `trademarks`（品牌） | 批量提交检查、查询结果、导出报告 |
+| `check` / `reports` / `io`（品牌） | 检查执行、月度报告、导入导出 |
+| `jobs`（商户） | 巡检作业提交/查询/取消 |
+| `schedules`（商户） | 定时巡检的增删改查、手动触发、预览 |
 | `system` | 健康检查等 |
 
 ---
@@ -209,7 +212,7 @@ python aggregator.py            # 默认 http://127.0.0.1:8000
 python -m pytest modules/credit/test_regression.py -q   # 278
 python -m pytest modules/wipo/tests -q                  # 118
 python -m pytest modules/wipo/tests_new -q              # 44
-python tools/accept_aggregated.py                       # 聚合层端到端 76 项（需真 Chromium）
+python tools/accept_aggregated.py                       # 服务底座端到端 76 项（需真 Chromium）
 python -m ruff check aggregator.py credit_api_glue.py tools modules/wipo/app  # lint
 ```
 
@@ -228,7 +231,7 @@ python tools/build_frontends.py    # 构建三套前端产物
 
 | 文档 | 内容 |
 |---|---|
-| [`modules/credit/README-营业执照巡检.md`](modules/credit/README-营业执照巡检.md) | credit 模块：判定口径、验证码策略、定时巡检 |
+| [`modules/credit/README-营业执照巡检.md`](modules/credit/README-营业执照巡检.md) | 商户检查器：判定口径、验证码策略、定时巡检 |
 | [`modules/credit/docs/API_DOC.md`](modules/credit/docs/API_DOC.md) | credit 接口契约 |
 | [`modules/wipo/docs/PROJECT_STRUCTURE.md`](modules/wipo/docs/PROJECT_STRUCTURE.md) | WIPO 分层结构与依赖方向 |
 
@@ -241,7 +244,7 @@ python tools/build_frontends.py    # 构建三套前端产物
 > 截图来自本机运行实例（`127.0.0.1` 本地地址），已逐张做敏感信息检查：
 > IP / 邮箱 / 手机号均已打码，图中企业名称为示例数据，无真实业务数据。
 
-**商标监控模块（WIPO）**
+**品牌检查器（`/input` `/list` `/check` `/reports`）**
 
 | 商标状态检查（`/input`） | 商标清单（`/list`） |
 |---|---|
@@ -251,7 +254,7 @@ python tools/build_frontends.py    # 构建三套前端产物
 |---|
 | ![商标检查报告](docs/screenshots/商标检查报告.png) |
 
-**营业执照巡检模块（credit）**
+**商户检查器（`/overview` `/submit` `/schedules` `/jobs`）**
 
 | 总览（`/overview`） | 定时巡检（`/schedules`） |
 |---|---|
@@ -270,8 +273,8 @@ python tools/build_frontends.py    # 构建三套前端产物
 
 ## 📄 许可
 
-- `modules/wipo/`：MIT（见其 LICENSE）
-- `modules/credit/` 与聚合层：**私有演示许可**（见根目录 [LICENSE](LICENSE)）
+- `modules/wipo/`（品牌检查器）：MIT（见其 LICENSE）
+- `modules/credit/`（商户检查器）与服务底座：**私有演示许可**（见根目录 [LICENSE](LICENSE)）
   —— 仅授权个人学习、研究与内部演示，**未授权商业使用或二次分发**。
 
 ---

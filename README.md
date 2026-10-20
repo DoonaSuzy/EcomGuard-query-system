@@ -1,7 +1,8 @@
-# 聚统 · Aggregated Query & Inspection System
+# 电商合规核查平台 · EcomGuard
 
-> 把两个原本独立部署的系统合成**一个服务入口**：一份 OpenAPI、一个进程、两个功能模块。
-> 前端是**一套统一的 SPA**（左侧系统列表切换 WIPO / 营业执照），不再是两个各跑各的界面。
+> 一套服务底座 + 两个开箱即用的检查器：**品牌检查**（商标法律状态与疑似抢注）与
+> **商户检查**（营业执照登记状态巡检）。
+> 一份 OpenAPI、一个进程、一套统一前端，加新检查器只需在侧栏登记一项。
 
 [![tests](https://img.shields.io/badge/tests-440%20passed-brightgreen)](#-开发)
 [![CI](https://github.com/DoonaSuzy/Aggregated-query-and-inspection-system/actions/workflows/ci.yml/badge.svg)](https://github.com/DoonaSuzy/Aggregated-query-and-inspection-system/actions/workflows/ci.yml)
@@ -12,13 +13,13 @@
 
 ## 📖 项目概述
 
-| 模块 | 前端路由 | 做什么 | 原始仓库 |
+| 检查器 | 前端路由 | 做什么 | 原始仓库 |
 |---|---|---|---|
-| **WIPO 商标监控** | `/input` `/list` `/check` `/reports` | 商标法律状态与疑似抢注批量检查、月度报告归档、异常通知 | [WIPO_and_Brand](https://github.com/DoonaSuzy/WIPO_and_Brand) |
-| **营业执照巡检** | `/overview` `/submit` `/schedules` `/jobs` | 信用中国企业登记状态批量查询（存续 / 注销 / 吊销）、CSV 交付、异常推送 | [Business-License](https://github.com/DoonaSuzy/Business-License) |
+| **品牌检查**（`wipo`） | `/input` `/list` `/check` `/reports` | 商标法律状态与疑似抢注批量检查、月度报告归档、异常通知 | [WIPO_and_Brand](https://github.com/DoonaSuzy/WIPO_and_Brand) |
+| **商户检查**（`credit`） | `/overview` `/submit` `/schedules` `/jobs` | 信用中国企业登记状态批量查询（存续 / 注销 / 吊销）、CSV 交付、异常推送 | [Business-License](https://github.com/DoonaSuzy/Business-License) |
 
-两个模块的完整源码放在 `modules/` 下，**保持各自仓库原样**（聚合适配只动了 3 处，见[对模块源码的改动](#-对模块源码的改动)）。
-聚合层是根目录的 `aggregator.py` + `credit_api_glue.py` + `docker_entrypoint.py`，约 337 行。
+两个检查器的完整源码放在 `modules/` 下，**保持各自仓库原样**（挂载适配只动了 3 处，见[对模块源码的改动](#-对模块源码的改动)）。
+服务底座是根目录的 `aggregator.py` + `credit_api_glue.py` + `docker_entrypoint.py`，约 337 行。
 
 **现状一览**（2026-10-20 实测）：
 
@@ -29,7 +30,7 @@
 | 前端源码 | **6,769 非空行**（46 文件，含 1 个生成物） |
 | 自动化测试 | **440 项**（278 + 44 + 118，口径见下注） |
 | 自建断言脚本 | **131 项**（68 + 63） |
-| 聚合层端到端 | **76 项**（真 Chromium，全程 0 个 4xx/5xx） |
+| 服务底座端到端 | **76 项**（真 Chromium，全程 0 个 4xx/5xx） |
 | 统一 API | **21 条唯一路径 / 27 个 operation**（零冲突） |
 | 数据库表 | **7 张**（WIPO：`trademarks` / `reports` / `check_runs`；credit：`jobs` / `results` / `schedules` + 内部标记表 `meta`） |
 | 前端产物 | **5 套**（统一前端 1 套 + 每模块 2 套：独立运行 + 子路径托管） |
@@ -37,7 +38,7 @@
 > **代码量口径**（可复现，生产与测试**分开计**，避免把测试行数混进"代码量"）：
 > 生产 = `modules/wipo/app` **2,573**（30 文件）+ WIPO 顶层 10 个 `.py` **4,498**
 > + WIPO `docs`/`scripts` **194** + `modules/credit` 顶层 9 个 `.py` **3,469**
-> + credit `tools` **42** + 聚合层 **337**（`aggregator.py` + `credit_api_glue.py`
+> + credit `tools` **42** + 服务底座 **337**（`aggregator.py` + `credit_api_glue.py`
 > + `docker_entrypoint.py`）+ `tools/` **741** = **11,854**。
 > 测试 = `modules/wipo/tests` **2,309**（17 文件）+ `tests_new` **509**（4 文件）
 > + `modules/credit/test_regression.py` **2,789** = **5,607**。
@@ -60,14 +61,14 @@
 > **API 口径**（可复现）：`aggregator.create_app().openapi()['paths']` = **21 键 / 27 个 operation**
 > （`/api/jobs`、`/api/trademarks`、`/api/schedules` 各有 GET+POST，四个 `{id}` 路径各有两个方法）。
 > 复现：`python -c "import aggregator; s=aggregator.create_app().openapi(); print(len(s['paths']), sum(map(len, s['paths'].values())))"`。
-> 两个模块的路径**零交集**，这是能合进一个 app 的前提。
+> 两个检查器的路径**零交集**，这是能挂进同一个 app 的前提。
 
 ### 核心能力
 
-- **一套前端**：`/` 挂唯一 SPA，左侧系统列表切换两个业务系统，页面内切换**不整页刷新**、布局不跳变
+- **一套前端**：`/` 挂唯一 SPA，左侧检查器列表切换两个业务模块，页面内切换**不整页刷新**、布局不跳变
 - **一份 OpenAPI**：21 条路径合并导出，前端可一次 `openapi-typescript` 生成全部类型
 - **统一错误外壳**：credit 原本裸露的 `{"detail": …}` 自动变成 `{"success": false, "error": …, "request_id": …}`
-- **请求级追踪**：一个 `X-Request-Id` 贯穿两个模块，响应头与响应体一致
+- **请求级追踪**：一个 `X-Request-Id` 贯穿两个检查器，响应头与响应体一致
 - **数据层可选后端**：WIPO 走 MySQL（SQLAlchemy async + aiomysql），credit 走 SQLite 或 MySQL（同一个环境变量两种形态）
 - **lifespan 显式串联**：WIPO 的建表/连接池与 credit 的 Store/worker 线程按序进出，互不抢跑
 
@@ -78,22 +79,22 @@
 > 版本号取自**已安装的包**（`import` 后读 `__version__`）与 `node_modules/*/package.json`，
 > 不是照抄 requirements 的声明值；两者不一致处会单独注明。
 
-### 聚合层
+### 服务底座
 
 | 组件 | 版本 | 说明 |
 |---|---|---|
 | Python | **3.13.15**（实测） | 声明 `>=3.11`（沿用 WIPO 的 `requires-python`） |
-| FastAPI | 0.143.0 | 一个 app，`include_router` 合并两个模块 |
+| FastAPI | 0.143.0 | 一个 app，`include_router` 挂载两个检查器 |
 | uvicorn | 0.54.0 | **`--workers 1`** 硬约束，见下 |
-| structlog | 26.1.0 | 沿用 WIPO 的结构化日志，聚合层复用同一套中间件 |
+| structlog | 26.1.0 | 沿用 WIPO 的结构化日志，服务底座复用同一套中间件 |
 
-### 后端（两模块的并集）
+### 后端（两个检查器的并集）
 
 | 组件 | 版本 | 用在哪 |
 |---|---|---|
 | SQLAlchemy[asyncio] | 2.1.4 | WIPO 的 ORM 与连接池 |
 | aiomysql / PyMySQL | 0.3.2 / 1.2.3 | WIPO 异步驱动 / credit 同步驱动 |
-| pydantic | 2.14.0 | 两模块的模型层（credit 声明 2.14.1，兼容） |
+| pydantic | 2.14.0 | 两个检查器的模型层（credit 声明 2.14.1，兼容） |
 | camoufox | 0.4.11 | credit 的指纹伪装浏览器 |
 | ddddocr + onnxruntime | 1.6.1 / 1.31.0 | credit 的验证码识别 |
 | playwright | **1.62.0** | WIPO E2E + camoufox 的底层驱动（credit 声明 1.61.0） |
@@ -127,28 +128,28 @@
 浏览器
   │
   ├─ /  …            统一前端（web/dist，唯一一套 SPA；根 mount 在最后注册）
-  │   ├─ /input /list /check /reports        WIPO 的四个页面
-  │   └─ /overview /submit /schedules /jobs  营业执照的四个页面
+  │   ├─ /input /list /check /reports        品牌检查器的四个页面
+  │   └─ /overview /submit /schedules /jobs  商户检查器的四个页面
   ├─ /wipo[/]、/credit[/]                   旧地址，307 跳到 /input、/overview
   │
-  ├─ /api/trademarks、/api/check、/api/reports …   WIPO 模块接口
-  ├─ /api/jobs、/api/schedules、/api/health …     营业执照模块接口
-  └─ /health        聚合层健康检查
+  ├─ /api/trademarks、/api/check、/api/reports …   品牌检查器接口
+  ├─ /api/jobs、/api/schedules、/api/health …     商户检查器接口
+  └─ /health        服务底座健康检查
         │
-   aggregator.py  ← 一个 FastAPI app，include 两个模块的 router
+   aggregator.py  ← 一个 FastAPI app，include 两个检查器的 router
         ├── modules/wipo/app/…      （WIPO 的 FastAPI 应用，只取 router）
         └── modules/credit/api.py   （credit 的 router）
 ```
 
-前端为什么是「一套 SPA + 左侧系统列表」，而不是两个 iframe/两张入口卡片：
+前端为什么是「一套 SPA + 左侧检查器列表」，而不是两个 iframe/两张入口卡片：
 
 - 两个前端的全局 CSS 有 5 个同名类（`.page` / `.btn` / `.card` / `.badge` / `.toast`），
   同页加载会互相覆盖 —— 实测营业执照整站不可见。iframe 能隔离，但切换时整块内容重建、
   布局与滚动位置全跳，且地址栏不反映当前页面。
-- 统一后两个模块的 `.vue` 源码**一行都没改**：`web/` 把 `modules/*/src` 当"页面包"用别名
+- 统一后两个检查器的 `.vue` 源码**一行都没改**：`web/` 把 `modules/*/src` 当"页面包"用别名
   引进来（`@` → credit、`@wipo` → wipo），样式层面用 `reconcile.css` 把 credit 的
   `--c-*` 令牌映射到 WIPO 的令牌，视觉基准是 WIPO。
-- 代价：两个模块**仍各自保留独立的 vite 工程与产物**（可单独部署，WIPO 的 118 项 E2E 与
+- 代价：两个检查器**仍各自保留独立的 vite 工程与产物**（可单独部署，WIPO 的 118 项 E2E 与
   credit 的前端托管测试都还指着它们），`web/` 只是多出来的一个消费者。
 
 ### 为什么是「单 app + `include_router`」，不是 `mount()` 两个子应用
@@ -161,11 +162,11 @@
 | 同上 + 手动 `lifespan_context` | ✅ | **空 `[]`** | 可修好（`['ROOT START','SUB START','SUB STOP','ROOT STOP']`） |
 | `include_router(...)` | ✅ | **21 条合并** | 主 lifespan 内显式串联 |
 
-选第三种：前端能用**一份** `openapi.json` 生成全部类型，两模块共享同一个 `app.state`、
+选第三种：前端能用**一份** `openapi.json` 生成全部类型，两个检查器共享同一个 `app.state`、
 同一套中间件（request_id、统一错误外壳、CORS 只配一次）。
 代价是 credit 的 handler 必须改用 `request.app.state` —— 这是对它后端源码的**唯一**改动。
 
-### 两个模块的 lifespan 必须显式组合
+### 两个检查器的 lifespan 必须显式组合
 
 WIPO 的 lifespan 负责建表与释放连接池，credit 的负责建 `Store` 与启动 worker 线程。
 `aggregator.py` 的 `combined_lifespan` 依次进入、逆序退出，实测关闭日志顺序为
@@ -173,13 +174,13 @@ WIPO 的 lifespan 负责建表与释放连接池，credit 的负责建 `Store` �
 
 ### 统一错误外壳
 
-聚合层注册了 WIPO 的异常处理器，credit 原本裸露的响应会被自动包装：
+服务底座注册了 WIPO 的异常处理器，credit 原本裸露的响应会被自动包装：
 
 ```json
 {"success": false, "error": "作业不存在：nope", "request_id": "2cc56c67…", "code": 1000}
 ```
 
-两模块的响应头都带 `X-Request-Id`，与响应体里的 `request_id` 一致；上游传入的
+两个检查器的响应头都带 `X-Request-Id`，与响应体里的 `request_id` 一致；上游传入的
 `X-Request-Id` 会原样透传。**500 路径也曾丢 `request_id`**：`ServerErrorMiddleware`
 位于 `RequestContextMiddleware` 之外，走到那里时 contextvar 已被 reset。修法是把
 `request_id` 同时写进 `scope["state"]`，异常处理器从 `request.scope["state"]` 取
@@ -192,15 +193,15 @@ WIPO 的 lifespan 负责建表与释放连接池，credit 的负责建 `Store` �
 
 ```
 aggregated-system/
-├── aggregator.py              聚合入口：create_app()、统一前端挂载、combined_lifespan
+├── aggregator.py              服务底座入口：create_app()、统一前端挂载、combined_lifespan
 ├── credit_api_glue.py         credit 的 lifespan 拆分进出 + router re-export
 ├── docker_entrypoint.py       容器入口：拒绝 AGG_WORKERS>1、清 UBO 残缺目录，再转交 aggregator
-├── Dockerfile / docker-compose.yml / .dockerignore     容器化（91 上已端到端跑通）
-├── requirements.txt           两模块运行依赖的并集（58 项，57 项 `==` 锁定）
+├── Dockerfile / docker-compose.yml / .dockerignore     容器化（已端到端跑通）
+├── requirements.txt           两个检查器运行依赖的并集（58 项，57 项 `==` 锁定）
 ├── web/                       **统一前端**（唯一被聚合入口使用的 SPA）
-│   ├── src/App.vue            左侧系统列表 + 顶栏 + 业务区
+│   ├── src/App.vue            左侧检查器列表 + 顶栏 + 业务区
 │   ├── src/hosts/WipoHost.vue 把 WIPO 的四个 section 原样挂进来
-│   ├── src/styles/            reconcile.css（令牌映射）+ shell.css（系统列表）
+│   ├── src/styles/            reconcile.css（令牌映射）+ shell.css（检查器列表）
 │   └── vite.config.ts         别名 @ → credit、@wipo → wipo；**必须 dedupe vue**
 ├── tools/
 │   ├── build_frontends.py     构建三套前端产物（统一前端 + 每模块 dist/dist-agg）
@@ -213,13 +214,13 @@ aggregated-system/
 │   ├── Docker部署手册.md        91 上的部署、升级、排障
 │   ├── 巡检名单.md              63 家巡检名单 + 每家的实测登记状态
 │   ├── UBT-docker-部署可行性.md 容器化可行性取证（依赖、网络、阻塞项）
-│   └── archive/wipo-github/     WIPO 模块旧带的嵌套 .github（GitHub 只认仓库根，永不执行，归档留证）
+│   └── archive/wipo-github/     品牌检查器旧带的嵌套 .github（GitHub 只认仓库根，永不执行，归档留证）
 └── modules/
-    ├── wipo/                  完整 WIPO 模块（自带 tests/、tests_new/、web/、docs/）
+    ├── wipo/                  完整品牌检查器（自带 tests/、tests_new/、web/、docs/）
     │   ├── app/               新栈 FastAPI（core / api/v1 / models / repositories / services）
     │   ├── web/               Vue 3 前端；dist/ 与 dist-agg/ 是两套产物
     │   └── docs/              该模块自己的 API 文档与项目结构说明
-    └── credit/                完整 credit 模块（自带 test_regression.py、frontend/）
+    └── credit/                完整商户检查器（自带 test_regression.py、frontend/）
         ├── api.py             FastAPI（已改为 request.app.state）
         ├── credit_check.py    Camoufox + ddddocr 巡检核心
         ├── schedule.py        定时巡检调度线程（每日/每周/每月）
@@ -277,7 +278,7 @@ python -m venv .venv
     -i https://pypi.tuna.tsinghua.edu.cn/simple --timeout 60 --retries 3
 ```
 
-两模块的依赖差异很大（WIPO 要 SQLAlchemy + aiomysql，credit 要 camoufox + ddddocr），
+两个检查器的依赖差异很大（WIPO 要 SQLAlchemy + aiomysql，credit 要 camoufox + ddddocr），
 **推荐共用一个 venv**；`requirements.txt` 头部已写清三处版本冲突的取舍理由。
 
 ### 步骤 2 · 装两个浏览器（各自独立）
@@ -352,12 +353,12 @@ $env:CREDIT_DB          = 'mysql://root:pw@127.0.0.1:3306/credit_check'
 python aggregator.py
 ```
 
-**同库分表**也成立（两模块表名零交集：WIPO 是 `trademarks`/`reports`/`check_runs`，
+**同库分表**也成立（两个检查器表名零交集：WIPO 是 `trademarks`/`reports`/`check_runs`，
 credit 是 `jobs`/`results`），把 `CREDIT_DB` 指向 `wipo_trademark` 即可 ——
 但两套 DDL 混在一个库里，出问题时两边一起查，一般不建议。
 
 建表**自动完成**：WIPO 在 lifespan 里 `create_all`，credit 在 `Store.__init__` 里
-`CREATE TABLE IF NOT EXISTS`，都幂等，不需要手工跑 SQL。两模块都**没有**接 Alembic
+`CREATE TABLE IF NOT EXISTS`，都幂等，不需要手工跑 SQL。两个检查器都**没有**接 Alembic
 （`alembic` 虽在依赖里，但无 `alembic.ini`、无 `versions/`）—— 改列时要手工 `ALTER` 或删表重建。
 
 > credit 的连接是「每次操作开一条」，没有连接池。作业量是「一天几十条」的批处理，
@@ -400,7 +401,7 @@ python aggregator.py
 
 ## 🔌 统一接口
 
-21 条唯一路径 / 27 个 operation，两模块零冲突：
+21 条唯一路径 / 27 个 operation，两个检查器零冲突：
 
 | 方法 | 路径 | 模块 |
 |---|---|---|
@@ -423,10 +424,10 @@ python aggregator.py
 | `POST` | `/api/schedules/{schedule_id}/run` | credit |
 | `GET` | `/api/schedules/preview` | credit |
 | `GET` | `/api/health` | credit |
-| `GET` | `/health` | 聚合层（WIPO 的三态健康检查） |
+| `GET` | `/health` | 服务底座（WIPO 的三态健康检查） |
 
 `/api/check/status` 刻意**不带** `success` 外壳（credit 的接口同理沿用自己的契约）——
-这是为了不推翻两个模块已有的前端契约与回归断言。
+这是为了不推翻两个检查器已有的前端契约与回归断言。
 
 > **Swagger 分组**：`aggregator.py` 的 `openapi_tags` 声明了 7 组
 > （`trademarks` / `check` / `reports` / `io` / `jobs` / `schedules` / `system`）。
@@ -495,7 +496,7 @@ Camoufox(headless=not self.headful, locale="zh-CN", os=_os,
 ### 质量门禁
 
 ```powershell
-# 1. 聚合层端到端（起 uvicorn + 真实 Chromium，76 项断言）
+# 1. 服务底座端到端（起 uvicorn + 真实 Chromium，76 项断言）
 python tools\accept_aggregated.py
 
 # 2. 三个回归套件（必须分开跑，conftest 同名会冲突）
@@ -515,7 +516,7 @@ cd modules\credit  ; python tools\run_ci_lint.py               # UTF-8 + PS1 BOM
 cd web             ; npm run typecheck && npm run build
 ```
 
-`tools\accept_aggregated.py` 覆盖：统一前端首屏（左侧系统列表 / 侧栏几何 / 顶栏）、
+`tools\accept_aggregated.py` 覆盖：统一前端首屏（左侧检查器列表 / 侧栏几何 / 顶栏）、
 **UI 统一性**（主按钮 `rgb(79,70,229)`、卡片圆角 12px、侧栏深靛蓝渐变）、
 WIPO 新增商标 → 切页 → 表格计数、切到营业执照**不整页刷新且布局不跳变**、
 营业执照四页 + 定时巡检配置窗、提交作业 → 跳详情 → 详情页刷新、
@@ -527,7 +528,7 @@ WIPO 新增商标 → 切页 → 表格计数、切到营业执照**不整页刷
 |---|---|---|
 | WIPO（用自带 `pyproject.toml` 配置） | `ruff check app tests tests_new cli.py verify_fixes.py verify_new_stack.py` | **All checks passed** |
 | credit | `python tools\run_ci_lint.py` | 两项 `rc = 0`（它**没有** ruff 配置，裸跑有 85 项上游既有告警） |
-| 聚合层 + tools | `ruff check aggregator.py credit_api_glue.py tools` | **All checks passed** |
+| 服务底座 + tools | `ruff check aggregator.py credit_api_glue.py tools` | **All checks passed** |
 
 仓库根**没有统一 ruff 配置**，所以 `ruff check .` 会报几百项（绝大多数是模块里的上游告警，
 以及 `node_modules` 里的 JS）。正确做法是「各模块用各自 CI 同款命令分别跑」——
@@ -544,7 +545,7 @@ CI 的 lint job 就是上面三条的组合，零容忍。
 
 | Job | 内容 | 矩阵 |
 |---|---|---|
-| `lint` | 聚合层 + WIPO 全源码 ruff（零容忍）；credit 走 `tools/credit_lint_baseline.py` 基线守卫——69 条既有债务不拦门，**新增任何一条就红** | 单版本 |
+| `lint` | 服务底座 + WIPO 全源码 ruff（零容忍）；credit 走 `tools/credit_lint_baseline.py` 基线守卫——69 条既有债务不拦门，**新增任何一条就红** | 单版本 |
 | `tests` | credit 278 + WIPO 契约 44 + verify 68/63（**三套分开跑**，conftest 同名冲突） | Python 3.12 / 3.13（3.11 不进：`numpy==2.5.4` 声明 `Requires-Python>=3.12`，首跑实测装不上） |
 | `e2e` | `web/` typecheck（`npm ci` + `vue-tsc`）→ 构建三套前端产物（`build_frontends.py`，node_modules 缺失自动 `npm ci`）→ WIPO E2E 118 → 聚合验收 76（真 Chromium） | Python 3.13 + Node 22 |
 
@@ -576,7 +577,7 @@ CI 与本地命令一一对应，口径见上面「质量门禁」。三个注�
 
 | 能力 | 状态 |
 |---|---|
-| **统一前端**（一套 SPA + 左侧系统列表） | ✅ 切换不整页刷新、侧栏几何与 UI 令牌一致，76 项端到端覆盖 |
+| **统一前端**（一套 SPA + 左侧检查器列表） | ✅ 切换不整页刷新、侧栏几何与 UI 令牌一致，76 项端到端覆盖 |
 | 后端 router 合并 | ✅ 21 条路径 / 27 个 operation，零冲突 |
 | lifespan 串联 | ✅ 顺序正确，关闭逆序 |
 | 统一错误外壳 | ✅ credit 的 `{"detail"}` 自动包装 |
@@ -594,7 +595,7 @@ CI 与本地命令一一对应，口径见上面「质量门禁」。三个注�
 
 | 项 | 说明 |
 |---|---|
-| 聚合层 pytest 契约测试 | 现在只有 `accept_aggregated.py`（要浏览器，不适合 CI） |
+| 服务底座 pytest 契约测试 | 现在只有 `accept_aggregated.py`（要浏览器，不适合 CI） |
 | `modules/` 改 submodule | 现在手工同步上游 |
 | credit 上游的 lint 基线 | 基线守卫（`tools/credit_lint_baseline.py` + 69 条快照）已落地，**新增会拦**；把这 69 条真正清零是后续任务 |
 | 架构演进 | 见 `docs/架构演进路线.md`（P1–P4 分期：契约测试 → submodule → 横向扩展 → 可观测） |
@@ -614,7 +615,7 @@ CI 与本地命令一一对应，口径见上面「质量门禁」。三个注�
   `test_regression.py:676` / `:759`。
 - **全新克隆先构建再跑 credit 回归**：`test_legacy_unprefixed_paths_are_not_api` 依赖
   `frontend/dist` 存在（无 dist 时 SPA 兜底不挂载，`/health` 落到 FastAPI 默认 404 → 回 JSON）。
-  这是上游既有行为；WIPO 侧同类测试是优雅 skip，两模块在这一点上不一致。
+  这是上游既有行为；WIPO 侧同类测试是优雅 skip，两个检查器在这一点上不一致。
 - **credit 的 Camoufox 依赖真实浏览器**：容器部署要用 `tools/install_camoufox.py`
   离线安装（目标网络到 github.com 不通，`camoufox fetch` 必失败）。
 - **调度线程与开发机旧计划任务会重复巡检**：开发机上的
@@ -634,11 +635,11 @@ CI 与本地命令一一对应，口径见上面「质量门禁」。三个注�
 | [`docs/迁移验证报告.md`](docs/迁移验证报告.md) | 133 项断言的历史迁移验证（前端 / 接口 / 数据库 / 架构四层） |
 | [`docs/巡检名单.md`](docs/巡检名单.md) | 63 家巡检名单 + 每家实测登记状态；为什么用信用代码而不是全称 |
 | [`docs/架构演进路线.md`](docs/架构演进路线.md) | P1–P4 分期：契约测试 → submodule → 横向扩展 → 可观测 |
-| [`modules/wipo/README.md`](modules/wipo/README.md) | WIPO 模块：能力边界、环境变量、三种运行方式、测试策略、常见问题 |
-| [`modules/wipo/docs/API_DOC.md`](modules/wipo/docs/API_DOC.md) | WIPO 接口契约 |
-| [`modules/wipo/docs/PROJECT_STRUCTURE.md`](modules/wipo/docs/PROJECT_STRUCTURE.md) | WIPO 分层结构与依赖方向 |
-| [`modules/credit/README-营业执照巡检.md`](modules/credit/README-营业执照巡检.md) | credit 模块：判定口径、验证码策略、定时巡检、合规边界、实测记录 |
-| [`modules/credit/docs/API_DOC.md`](modules/credit/docs/API_DOC.md) | credit 接口契约（含 `/api/schedules` 七条调度接口） |
+| [`modules/wipo/README.md`](modules/wipo/README.md) | 品牌检查器：能力边界、环境变量、三种运行方式、测试策略、常见问题 |
+| [`modules/wipo/docs/API_DOC.md`](modules/wipo/docs/API_DOC.md) | 品牌检查器接口契约 |
+| [`modules/wipo/docs/PROJECT_STRUCTURE.md`](modules/wipo/docs/PROJECT_STRUCTURE.md) | 品牌检查器分层结构与依赖方向 |
+| [`modules/credit/README-营业执照巡检.md`](modules/credit/README-营业执照巡检.md) | 商户检查器：判定口径、验证码策略、定时巡检、合规边界、实测记录 |
+| [`modules/credit/docs/API_DOC.md`](modules/credit/docs/API_DOC.md) | 商户检查器接口契约（含 `/api/schedules` 七条调度接口） |
 
 ---
 
@@ -646,17 +647,17 @@ CI 与本地命令一一对应，口径见上面「质量门禁」。三个注�
 
 `modules/` 下的内容属于上游仓库，改动请提到对应仓库：
 
-- WIPO → [DoonaSuzy/WIPO_and_Brand](https://github.com/DoonaSuzy/WIPO_and_Brand)
-- credit → [DoonaSuzy/Business-License](https://github.com/DoonaSuzy/Business-License)
+- 品牌检查器 → [DoonaSuzy/WIPO_and_Brand](https://github.com/DoonaSuzy/WIPO_and_Brand)
+- 商户检查器 → [DoonaSuzy/Business-License](https://github.com/DoonaSuzy/Business-License)
 
-聚合层（`aggregator.py`、`credit_api_glue.py`、`tools/`）与统一前端（`web/`）
+服务底座（`aggregator.py`、`credit_api_glue.py`、`tools/`）与统一前端（`web/`）
 的改动请提在本仓库。提 PR 前跑一遍[质量门禁](#-质量门禁)里的五条命令。
 
 ## 📄 许可
 
-- `modules/wipo/`：**MIT**（见 [`modules/wipo/LICENSE`](modules/wipo/LICENSE)，`Copyright (c) 2026 DoonaSuzy`）
-- `modules/credit/`：上游仓库**没有** LICENSE 文件
-- 聚合层（`aggregator.py` / `credit_api_glue.py` / `tools/`）：跟随上游，**尚未单独声明许可**
+- `modules/wipo/`（品牌检查器）：**MIT**（见 [`modules/wipo/LICENSE`](modules/wipo/LICENSE)，`Copyright (c) 2026 DoonaSuzy`）
+- `modules/credit/`（商户检查器）：上游仓库**没有** LICENSE 文件
+- 服务底座（`aggregator.py` / `credit_api_glue.py` / `tools/`）：跟随上游，**尚未单独声明许可**
 
 > ⚠️ 仓库根目前没有 `LICENSE`。若要对外发布，建议在根补一份 MIT（与 WIPO 一致），
-> 并确认对 credit 模块的授权范围。
+> 并确认对商户检查器的授权范围。
