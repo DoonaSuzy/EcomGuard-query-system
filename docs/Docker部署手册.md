@@ -433,6 +433,19 @@ if not need and not req.get("always_notify"):
 > `notified=true` = 发了；`notified=false + notify_error=null` = 被跳过（无异常）；
 > `notified=false + notify_error="mail: ..."` = 真失败。
 
+#### ⚠️ 第二个陷阱：`state=done` 的那一刻 `notified` 可能还是 false
+
+`api.py:1064` 的顺序是先写作业终态、再调 `_maybe_notify`，而
+`mark_notified` 在通知真正成功后才落库。所以轮询到 `state=done` 就立刻读
+`notified`，会拿到一个**几百毫秒的假象 false**。
+
+实测撞到过：轮询脚本一看到 `done` 就查库，得到 `done / notified=0 / notify_error=空`，
+与「被跳过」的症状一模一样；等 1 秒再查就是 `notified=1`，日志里也有
+「推送成功」。
+
+> 判据：`notify_error` 为空 **且** 日志里既没有「推送成功」也没有
+> 「全部正常，跳过推送」时，说明通知还没跑完，等一下再查。
+
 ### 7.4 Linux 侧回归（容器内跑 pytest）
 
 用镜像本身跑（镜像里已带 pytest / httpx / Pillow / aiosqlite，无需另装）：
@@ -496,6 +509,30 @@ docker run --rm ... -w /app/modules/wipo aggregated-inspection-app:local \
 > 也就是说：**「发不出去」的风险已排除**（凭据/网络/TLS 都通）。
 > `sendmail` + 真实收件人这一段随后在 §7.3b 用真实作业验证通过。
 
+补充实测（走完整 `send_message`，不只是 login）：
+
+```
+noop  : (250, b'OK from 163.204.216.68 to newxmesmtplogicsvrszb51-1.qq.com.')
+login : (235, b'Authentication successful')
+refused: {}          # 空 dict = 没有任何收件人被拒
+quit  : (221, b'Bye.')
+```
+
+#### 凭据不对时，QQ 是「直接断连」而不是报错
+
+实测踩到：`.env` 里 `SMTP_USER=probe@example.com`、`SMTP_PASS` 只有 5 位（样例占位值）
+时，容器内发信的表现是：
+
+```
+connect: (250, b'OK from ...')
+smtplib.SMTPServerDisconnected: Connection unexpectedly closed
+  ← 断在 s.login() 里的 AUTH 命令
+```
+
+`noop` 成功、`login` 阶段被服务器**直接掐断连接**，没有任何 `535 认证失败` 之类的
+友好回执。看到这个异常不要去查网络或 TLS（那两步已经通了），直接看
+`SMTP_USER` / `SMTP_PASS` 是不是还是样例里的占位值。
+
 > 顺带一个观察：裸域 `creditchina.gov.cn` / `gsxt.gov.cn` **DNS 解析失败**
 > （`No address associated with hostname`），只有带 `www.` 的能解析。
 > 当前代码用的都是 `www.` 形式，所以不影响；但若以后有人把 URL 改成裸域，
@@ -503,8 +540,9 @@ docker run --rm ... -w /app/modules/wipo aggregated-inspection-app:local \
 
 ## 8. 尚未验证 / 下一步
 
-- **收件人要换成真正的业务人员**：§7.3b 验证时把 `MAIL_TO_BUSINESS` 临时设成了
-  测试邮箱（自收自发，证明链路通）。上线前必须改回真实收件人：
+- **收件人要换成真正的业务人员**：§7.3b 验证时是在**单次作业的 `mail_to`** 里
+  填了测试邮箱（自收自发，证明链路通），`MAIL_TO_BUSINESS` / `MAIL_TO_MANAGER`
+  这两条**定时巡检的默认收件人**始终是样例占位值，从未改过。上线前必须改：
   ```bash
   # .env.docker 里
   MAIL_TO_BUSINESS=<业务人员邮箱>     # 每日巡检收件人
@@ -513,7 +551,8 @@ docker run --rm ... -w /app/modules/wipo aggregated-inspection-app:local \
   docker compose --env-file .env.docker up -d --no-deps app
   ```
   另外 `SMTP_PASS` 是 QQ 邮箱的 **16 位授权码**（不是登录密码），
-  改密码/关服务后会失效，届时 `notify_error` 会显示 `mail: ...`。
+  改密码/关服务后会失效，届时 `notify_error` 会显示 `mail: ...`；
+  授权码填错则表现为 `SMTPServerDisconnected`，见 §7.6。
 - **开发机旧计划任务冲突**：见 §4，容器接管前先停掉 `CreditChina-LicenseCheck`
   （该任务指向 Windows 侧的旧仓库 `F:\projects\GO1\reverse-records\`，
   与 91 这台 Linux 机不是同一套东西，但**同一个业务时段**，会重复巡检）。

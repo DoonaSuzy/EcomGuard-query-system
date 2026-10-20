@@ -538,11 +538,11 @@ CI 的 lint job 就是上面三条的组合，零容忍。
 |---|---|---|
 | `lint` | 聚合层 + WIPO 全源码 ruff（零容忍）；credit 测试文件 `--exit-zero` 出报告（19 项上游既有告警，只守「不再新增」） | 单版本 |
 | `tests` | credit 254 + WIPO 契约 44 + verify 68/63（**三套分开跑**，conftest 同名冲突） | Python 3.12 / 3.13（3.11 不进：`numpy==2.5.4` 声明 `Requires-Python>=3.12`，首跑实测装不上） |
-| `e2e` | 构建三套前端产物（`build_frontends.py`，node_modules 缺失自动 `npm ci`）→ WIPO E2E 118 → 聚合验收 76（真 Chromium） | Python 3.13 |
+| `e2e` | `web/` typecheck（`npm ci` + `vue-tsc`）→ 构建三套前端产物（`build_frontends.py`，node_modules 缺失自动 `npm ci`）→ WIPO E2E 118 → 聚合验收 76（真 Chromium） | Python 3.13 + Node 22 |
 
-> ⚠️ CI 的 e2e job 目前只装 Playwright chromium、不装 camoufox firefox，也**不跑
-> `web/` 的 typecheck**。统一前端一旦改坏，CI 只在「聚合验收」那 76 项里才会发现 ——
-> 所以本地改前端后务必先 `cd web; npm run typecheck && npm run build`。
+> ⚠️ CI 的 e2e job 只装 Playwright chromium、**不装 camoufox firefox**（真实巡检
+> 才需要，聚合验收的作业允许 failed）。统一前端有独立的 `vue-tsc` 类型检查步骤，
+> 排在构建之前 —— 失败时比「76 项验收里某一条红」好定位得多。
 
 CI 与本地命令一一对应，口径见上面「质量门禁」。三个注意点：
 
@@ -586,7 +586,6 @@ CI 与本地命令一一对应，口径见上面「质量门禁」。三个注�
 | 项 | 说明 |
 |---|---|
 | 聚合层 pytest 契约测试 | 现在只有 `accept_aggregated.py`（要浏览器，不适合 CI） |
-| CI 覆盖统一前端 | `web/` 的 typecheck 与 build 尚未进 CI（见上方警告） |
 | `modules/` 改 submodule | 现在手工同步上游 |
 | credit 上游的 lint 基线 | 85 项既有告警，接管前应定基线 |
 | 架构演进 | 见 `docs/架构演进路线.md`（P1–P4 分期：契约测试 → submodule → 横向扩展 → 可观测） |

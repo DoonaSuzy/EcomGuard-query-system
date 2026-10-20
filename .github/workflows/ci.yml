@@ -58,10 +58,10 @@ jobs:
       # 口径与 README「测试口径」注一致：三个套件必须分开跑——
       # wipo 的 tests/ 与 tests_new/ 各有一个同名 conftest.py，
       # 合跑报 ImportError: cannot import name 'FAKE_REPORT' from 'conftest'。
-      - name: credit 回归（201）
+      - name: credit 回归（254）
         working-directory: modules/credit
         run: python -m pytest test_regression.py -q
-      - name: WIPO 契约（43）
+      - name: WIPO 契约（44）
         working-directory: modules/wipo
         run: python -m pytest tests_new -q
       - name: WIPO 缺陷回归断言（68 + 63，不经 pytest）
@@ -82,7 +82,7 @@ jobs:
 
   # ---------- Job 3：E2E + 聚合真机验收（单 job，重） ----------
   e2e:
-    name: E2E（110）+ 聚合验收（37）
+    name: E2E（118）+ 聚合验收（76）
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -99,12 +99,19 @@ jobs:
           pip install -r requirements.txt
       - name: 安装 Playwright chromium（WIPO E2E 用；camoufox 的 firefox 只在真实巡检时才需要）
         run: python -m playwright install --with-deps chromium
-      - name: 构建两套前端产物
+      # 统一前端是独立 TS 工程，vue-tsc 能抓到「模板里引用了不存在的属性」这类
+      # 构建期不一定报错、但运行期白屏的问题。单独一步，失败时比 E2E 全红好定位。
+      - name: 统一前端类型检查（web/）
+        working-directory: web
+        run: |
+          npm ci --no-audit --no-fund
+          npm run typecheck
+      - name: 构建三套前端产物（web/dist + 每模块 dist/dist-agg）
         run: python tools/build_frontends.py
-      - name: WIPO E2E（110，打默认 base 的 dist/）
+      - name: WIPO E2E（118，打默认 base 的 dist/）
         working-directory: modules/wipo
         run: python -m pytest tests -q
-      - name: 聚合真机验收（37，起 uvicorn + 真 Chromium，打 dist-agg/）
+      - name: 聚合真机验收（76，起 uvicorn + 真 Chromium，打 web/dist）
         run: python tools/accept_aggregated.py
       - name: 上传失败截图
         if: failure()
