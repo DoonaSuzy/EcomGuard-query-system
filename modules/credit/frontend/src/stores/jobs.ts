@@ -150,7 +150,7 @@ export const useDraftStore = defineStore('draft', {
     namesText: '',
     webhook: '',
     mailTo: '',
-    alwaysNotify: false,
+    alwaysNotify: true,
     minDelay: 3.5,
     maxDelay: 6.5,
   }),
@@ -160,7 +160,7 @@ export const useDraftStore = defineStore('draft', {
       this.namesText = ''
       this.webhook = ''
       this.mailTo = ''
-      this.alwaysNotify = false
+      this.alwaysNotify = true
       this.minDelay = 3.5
       this.maxDelay = 6.5
     },

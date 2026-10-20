@@ -377,7 +377,8 @@ cd F:\projects\GO1\reverse-records
 $body = @{
     names  = @('阿里巴巴(中国)有限公司', '石家庄三鹿集团股份有限公司')
     mail_to = '主管@company.com'   # 可选，留空则不发
-    always_notify = $false          # 可选，周报场景设 true
+    always_notify = $true           # 默认 true：全正常也发，每期都能看到全部企业
+                                    # 只在有异常时才想收到，显式传 $false
 } | ConvertTo-Json
 
 $job = Invoke-RestMethod -Uri 'http://127.0.0.1:8000/api/jobs' -Method Post `

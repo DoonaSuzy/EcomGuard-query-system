@@ -262,7 +262,7 @@ log_path(name: str, log_dir: Path | None = None) -> Path   # logkit.py:88
 | `names` | `list[str]` | 必填 | 企业全称**或 18 位统一社会信用代码**，1–200 条；清洗空行/`#` 注释并去重，清洗后为空 → 422 |
 | `webhook` | `str \| None` | `None` | 企业微信/钉钉/飞书 webhook，留空则不发；**必须含主机名**（裸 `https://` 视为非法，422 而不是跑完才发现推不出去） |
 | `mail_to` | `str \| None` | `None` | 收件人，分隔符支持 `,` `;` 及中文 `，` `；` 与换行；每条都校验 `x@y.z`，任一不合法 → 422；留空则不发邮件 |
-| `always_notify` | `bool` | `False` | 无异常也推送（周报用） |
+| `always_notify` | `bool` | **`True`** | 无异常也推送。默认开：巡检结果本身就是交付物，正文始终带「全部主体清单」，研发/主管每期都能看到全量名单与各自判定。置 `False` 则退回「只在有异常/待复核时才发」 |
 | `min_delay` / `max_delay` | `float` | `3.5` / `6.5` | 两家之间随机间隔区间；`max < min` → 422 |
 
 **为什么是 202 而不是 200**：作业只是入队，抓取要几分钟到十几分钟。
@@ -291,7 +291,13 @@ log_path(name: str, log_dir: Path | None = None) -> Path   # logkit.py:88
 | `weekday` | `int` | `0` | `weekly` 用；**0=周一 … 6=周日** |
 | `day` | `int` | `1` | `monthly` 用；**1–28** |
 | `names` | `list[str]` | 必填 | 同 `POST /api/jobs`：企业全称**或 18 位统一社会信用代码**，1–200 条 |
-| `webhook` / `mail_to` / `always_notify` / `min_delay` / `max_delay` | — | — | 同 `POST /api/jobs`，触发时原样透传 |
+| `webhook` / `mail_to` / `always_notify` / `min_delay` / `max_delay` | — | — | 同 `POST /api/jobs`，触发时原样透传（`always_notify` 同样默认 `True`） |
+
+> **升级注意（`always_notify` 从 False 翻成 True）**：建表默认值只影响新行，
+> 老库里已有的调度行仍带着 `always_notify=0`。`Store.__init__` 会做一次性回填
+> （`_MIG_ALWAYS_NOTIFY = "mig_20261020_always_notify_on"`，用 `meta` 表打标记），
+> 把所有 `always_notify=0` 的存量调度翻成 1；标记落库后不再重放，
+> 所以之后运营手工关掉某一条，重启也不会又给翻开。
 
 **推荐用信用代码而不是全称**：实测「北京字节跳动科技有限公司」按名称查只会得到
 候选「跳动字节科技(北京)有限公司」（判定 unknown）；统一社会信用代码是精确键，

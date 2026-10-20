@@ -181,7 +181,9 @@ def build_report(rows: list[dict],
             lines.append(f"| {name} | {code} | {st} | {VERDICT_CN.get(r.get('判定',''), '?')} |")
         lines.append("")
     elif not unknown:
-        lines += ["本期无异常主体。", ""]
+        # 全绿时也要说清「下面那张表就是全部结果」：只写「本期无异常主体」
+        # 会让人以为正文到此为止，从而漏看紧跟其后的全量清单。
+        lines += ["本期无异常主体，全部企业明细见下表。", ""]
 
     if unknown:
         lines += ["**需人工复核**", "",

@@ -189,8 +189,8 @@ function clearNames() {
       <div class="field">
         <label for="mail">告警邮件收件人</label>
         <input id="mail" v-model="mailTo" type="text" placeholder="留空则不发送邮件，多个用逗号或分号分隔" />
-        <div class="hint">作业结束且有异常时才发；全正常会用一条「无异常」简报（可关闭）。
-          中英文逗号、分号都能分隔，会统一转成英文逗号保存。</div>
+        <div class="hint">默认每期都发（正文含全部企业清单，全正常也发）；
+          想只在有异常时才收，取消下面的勾选。中英文逗号、分号都能分隔，会统一转成英文逗号保存。</div>
       </div>
 
       <div class="field">
@@ -215,7 +215,7 @@ function clearNames() {
 
       <label class="check">
         <input v-model="alwaysNotify" type="checkbox" />
-        <span>全部正常也推送（用于例行周报）</span>
+        <span>全部正常也推送（默认开：每期都能看到全部企业）</span>
       </label>
 
       <div v-if="touched && formProblem" class="field-err" role="alert">{{ formProblem }}</div>

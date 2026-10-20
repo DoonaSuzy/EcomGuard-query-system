@@ -229,8 +229,8 @@ export interface components {
             mail_to?: string | null;
             /**
              * Always Notify
-             * @description 无异常也推送（周报用）
-             * @default false
+             * @description 无异常也推送。默认 True：巡检结果本身就是交付物，「全部正常」也是有效信息（研发需要每期看到全量名单）。置 False 则只在有异常/待复核时才发。
+             * @default true
              */
             always_notify?: boolean;
             /**
@@ -544,7 +544,7 @@ export interface components {
             /**
              * Always Notify
              * @description 无异常也推送
-             * @default false
+             * @default true
              */
             always_notify?: boolean;
             /**

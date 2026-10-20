@@ -151,7 +151,11 @@ class CheckRequest(BaseModel):
                             description="企业全称列表，最多 200 家")
     webhook: str | None = Field(None, description="企业微信/钉钉/飞书 webhook，留空则不发")
     mail_to: str | None = Field(None, description="收件人，逗号分隔；留空则不发邮件")
-    always_notify: bool = Field(False, description="无异常也推送（周报用）")
+    always_notify: bool = Field(
+        True,
+        description="无异常也推送。默认 True：巡检结果本身就是交付物，"
+                    "「全部正常」也是有效信息（研发需要每期看到全量名单）。"
+                    "置 False 则只在有异常/待复核时才发。")
     min_delay: float = Field(3.5, ge=0, le=60, description="两家之间最小间隔秒数")
     max_delay: float = Field(6.5, ge=0, le=120, description="两家之间最大间隔秒数")
 
@@ -292,7 +296,7 @@ class ScheduleIn(BaseModel):
                              description="企业全称列表")
     webhook: str | None = Field(None, description="webhook，留空则不发")
     mail_to: str | None = Field(None, description="收件人，逗号分隔")
-    always_notify: bool = Field(False, description="无异常也推送")
+    always_notify: bool = Field(True, description="无异常也推送")
     min_delay: float = Field(3.5, ge=0, le=60)
     max_delay: float = Field(6.5, ge=0, le=120)
 
@@ -434,7 +438,7 @@ CREATE TABLE IF NOT EXISTS schedules (
     names         TEXT NOT NULL,
     webhook       TEXT,
     mail_to       TEXT,
-    always_notify INTEGER NOT NULL DEFAULT 0,
+    always_notify INTEGER NOT NULL DEFAULT 1,
     min_delay     REAL NOT NULL DEFAULT 3.5,
     max_delay     REAL NOT NULL DEFAULT 6.5,
     next_run_at   TEXT,
@@ -444,6 +448,10 @@ CREATE TABLE IF NOT EXISTS schedules (
     last_error    TEXT,
     created_at    TEXT NOT NULL,
     updated_at    TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS meta (
+    key   TEXT PRIMARY KEY,
+    value TEXT NOT NULL
 );
 """
 
@@ -511,7 +519,7 @@ CREATE TABLE IF NOT EXISTS schedules (
     names         LONGTEXT NOT NULL,
     webhook       VARCHAR(1024) DEFAULT NULL,
     mail_to       VARCHAR(1024) DEFAULT NULL,
-    always_notify TINYINT(1) NOT NULL DEFAULT 0,
+    always_notify TINYINT(1) NOT NULL DEFAULT 1,
     min_delay     DOUBLE NOT NULL DEFAULT 3.5,
     max_delay     DOUBLE NOT NULL DEFAULT 6.5,
     next_run_at   VARCHAR(40) DEFAULT NULL,
@@ -523,6 +531,14 @@ CREATE TABLE IF NOT EXISTS schedules (
     updated_at    VARCHAR(40) NOT NULL,
     PRIMARY KEY (schedule_id),
     KEY idx_schedules_due (enabled, next_run_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+"""
+
+SCHEMA_MYSQL_META = """
+CREATE TABLE IF NOT EXISTS meta (
+    `key`  VARCHAR(64) NOT NULL,
+    value  TEXT NOT NULL,
+    PRIMARY KEY (`key`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
 """
 
@@ -591,6 +607,7 @@ class Store:
             with self._conn() as c:
                 c.executescript(SCHEMA_SQLITE)
                 self._sqlite_add_columns(c)
+                self._sqlite_backfill_always_notify(c)
 
     # -- 列级迁移 -------------------------------------------------------
     #: 建表用 ``CREATE TABLE IF NOT EXISTS``，对**已存在**的表完全无操作。
@@ -621,6 +638,33 @@ class Store:
                 if cur.fetchone()["n"] == 0:
                     cur.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
 
+    # -- 数据级迁移 -----------------------------------------------------
+    #: 建表默认值只影响**新**行。老库里已有的调度行仍带着旧默认
+    #: ``always_notify=0``，光改 DDL/Pydantic 默认值不会让它们开始推送，
+    #: 于是「升级后行为没变」——这类"静默不生效"必须在升级路径上显式处理。
+    #:
+    #: 一次性执行，用 meta 表打标记（NOT EXISTS 判断足够，不需要事务隔离）：
+    #: 万一运营后来手工把某条关掉了，重启不能又给它翻开。
+    _MIG_ALWAYS_NOTIFY = "mig_20261020_always_notify_on"
+
+    def _sqlite_backfill_always_notify(self, conn) -> None:
+        if conn.execute("SELECT value FROM meta WHERE key=?",
+                        (self._MIG_ALWAYS_NOTIFY,)).fetchone():
+            return
+        conn.execute("UPDATE schedules SET always_notify=1 WHERE always_notify=0")
+        conn.execute("INSERT INTO meta(key, value) VALUES(?, ?)",
+                     (self._MIG_ALWAYS_NOTIFY, _now()))
+
+    def _mysql_backfill_always_notify(self, conn) -> None:
+        with conn.cursor() as cur:
+            cur.execute("SELECT value FROM meta WHERE `key`=%s",
+                        (self._MIG_ALWAYS_NOTIFY,))
+            if cur.fetchone():
+                return
+            cur.execute("UPDATE schedules SET always_notify=1 WHERE always_notify=0")
+            cur.execute("INSERT INTO meta(`key`, value) VALUES(%s, %s)",
+                        (self._MIG_ALWAYS_NOTIFY, _now()))
+
     # -- 连接管理 -------------------------------------------------------
     def _mysql_connect(self):
         import pymysql
@@ -638,8 +682,10 @@ class Store:
                 cur.execute(SCHEMA_MYSQL)
                 cur.execute(SCHEMA_MYSQL_RESULTS)
                 cur.execute(SCHEMA_MYSQL_SCHEDULES)
+                cur.execute(SCHEMA_MYSQL_META)
             conn.commit()
             self._mysql_add_columns(conn)
+            self._mysql_backfill_always_notify(conn)
             conn.commit()
         finally:
             conn.close()

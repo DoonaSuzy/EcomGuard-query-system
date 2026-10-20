@@ -315,7 +315,7 @@ onMounted(() => {
 
         <label class="check">
           <input v-model="form.alwaysNotify" type="checkbox" />
-          <span>全部正常也推送（用于例行周报）</span>
+          <span>全部正常也推送（默认开：每期都能看到全部企业）</span>
         </label>
 
         <div v-if="formErr" class="field-err" role="alert">{{ formErr }}</div>

@@ -3116,3 +3116,109 @@ class TestRoster:
         out = ScheduleIn(name="名单自检", freq="daily", at_time="09:00",
                          names=roster.load_roster())
         assert len(out.names) == len(roster.load_roster())
+
+
+# ---------------------------------------------------------------- 「全部正常也推送」默认开
+class TestAlwaysNotifyDefaultOn:
+    """研发口径：巡检结果本身就是交付物，每期都要看到全量名单。
+
+    早前 ``always_notify`` 默认 False（「只在有异常时发」），于是全绿的那几天
+    一封邮件都没有，看起来像巡检没跑——这正是本次改动要消除的静默失败。
+    这里锁死默认值与语义，防止以后被"顺手改回去"。
+    """
+
+    def test_check_request_defaults_to_true(self):
+        import api
+        req = api.CheckRequest(names=["某公司"])
+        assert req.always_notify is True
+
+    def test_schedule_in_defaults_to_true(self):
+        import api
+        s = api.ScheduleIn(name="x", freq="daily", at_time="09:00",
+                           names=["某公司"])
+        assert s.always_notify is True
+
+    def test_schema_default_is_one_for_both_backends(self):
+        """建表默认值必须一起改，否则新库插入不传该列时仍会落 0。"""
+        import api
+        assert "always_notify INTEGER NOT NULL DEFAULT 1" in api.SCHEMA_SQLITE
+        assert "always_notify TINYINT(1) NOT NULL DEFAULT 1" in \
+            api.SCHEMA_MYSQL_SCHEDULES
+
+    def test_all_ok_job_still_notifies(self, tmp_path, monkeypatch):
+        """全绿作业也要真的走一次发送——不是只在字段上写着 True。"""
+        import api
+        sent = {}
+
+        def fake_mail(host, port, user, pw, addrs, title, md, flag, use_ssl=False):
+            sent["title"] = title
+            sent["md"] = md
+
+        import notify
+        monkeypatch.setattr(notify, "send_mail", fake_mail)
+        monkeypatch.setenv("SMTP_HOST", "smtp.x.com")
+        monkeypatch.setenv("SMTP_PORT", "465")
+
+        rows = [{"输入名称": "A", "匹配名称": "A", "统一社会信用代码": "X" * 18,
+                 "登记状态": "存续", "判定": "ok", "备注": ""}]
+        st = api.Store(tmp_path / "jobs.db")
+        job_id = st.create_job(["A"], {"mail_to": "a@b.com",
+                                       "always_notify": True})
+        w = api.Worker(st)          # 构造但不 start()：不需要真跑浏览器
+        w._maybe_notify(job_id, rows, {"mail_to": "a@b.com",
+                                       "always_notify": True})
+        assert "md" in sent, "全绿且 always_notify=True 时必须真的发送"
+        assert "全部主体清单" in sent["md"], "全绿时正文必须仍带全量清单"
+        assert st.get_job(job_id)["notified"] == 1
+
+    def test_all_ok_job_skips_when_explicitly_off(self, tmp_path, monkeypatch):
+        """显式关掉时仍要能静默——用户保留「只在有异常才发」的能力。"""
+        import api
+        sent = {}
+        import notify
+        monkeypatch.setattr(notify, "send_mail",
+                            lambda *a, **k: sent.setdefault("sent", True))
+        rows = [{"输入名称": "A", "判定": "ok", "登记状态": "存续",
+                 "统一社会信用代码": "", "匹配名称": "A", "备注": ""}]
+        st = api.Store(tmp_path / "jobs.db")
+        job_id = st.create_job(["A"], {"mail_to": "a@b.com",
+                                       "always_notify": False})
+        api.Worker(st)._maybe_notify(job_id, rows,
+                                     {"mail_to": "a@b.com",
+                                      "always_notify": False})
+        assert "sent" not in sent, "always_notify=False 时全绿不应发送"
+
+    def test_legacy_rows_get_backfilled_once(self, tmp_path):
+        """老库升级：已有调度行必须从 0 翻成 1；标记落库后重启不再重放。
+
+        建一个新建库的 Store 会立刻打上迁移标记（那时还没有行），所以这里
+        手工把标记删掉，模拟「老库根本没有 meta 表/标记」的升级场景。
+        """
+        import sqlite3
+
+        import api
+        db = tmp_path / "jobs.db"
+        st = api.Store(db)
+        sid = st.add_schedule({
+            "name": "老调度", "enabled": True, "freq": "daily", "at_time": "09:00",
+            "names": '["A"]', "mail_to": "a@b.com", "always_notify": False,
+            "next_run_at": "2026-10-21T09:00:00+08:00"})
+        assert st.get_schedule(sid)["always_notify"] == 0, "先确认确实写成了 0"
+
+        with sqlite3.connect(db) as c:      # 抹掉标记 = 回到未升级状态
+            c.execute("DELETE FROM meta WHERE key=?", (api.Store._MIG_ALWAYS_NOTIFY,))
+
+        st2 = api.Store(db)                  # 重开 → 触发一次性迁移
+        assert st2.get_schedule(sid)["always_notify"] == 1
+
+        # 运营后来手工关掉，重启不能又给翻开（标记已落库）
+        st2.update_schedule(sid, {"always_notify": False})
+        st3 = api.Store(db)
+        assert st3.get_schedule(sid)["always_notify"] == 0, "迁移不可重放"
+
+    def test_job_request_echo_preserves_true(self, tmp_path):
+        """详情页回显不能被模型默认值洗成 False。"""
+        import api
+        req = api.JobRequest(**{"names": ["A"], "always_notify": True,
+                                "mail_to": "a@b.com"})
+        assert req.always_notify is True

@@ -44,7 +44,7 @@ export function emptyForm(): ScheduleForm {
     namesText: '',
     webhook: '',
     mailTo: '',
-    alwaysNotify: false,
+    alwaysNotify: true,
     minDelay: 3.5,
     maxDelay: 6.5,
   }
@@ -95,7 +95,7 @@ export function fromSchedule(s: ScheduleOut): ScheduleForm {
     namesText: (s.names ?? []).join('\n'),
     webhook: s.webhook ?? '',
     mailTo: s.mail_to ?? '',
-    alwaysNotify: s.always_notify ?? false,
+    alwaysNotify: s.always_notify ?? true,
     minDelay: s.min_delay ?? 3.5,
     maxDelay: s.max_delay ?? 6.5,
   }
