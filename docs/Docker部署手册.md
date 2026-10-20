@@ -8,10 +8,12 @@
 
 | 文件 | 作用 |
 |---|---|
-| `Dockerfile` | 三阶段构建：Node 构建前端 → 装 Python 依赖 + 拉 Camoufox → 运行镜像 |
+| `Dockerfile` | 三阶段构建：Node 构建三套前端（`web/` 统一前端 + 两个模块）→ 装 Python 依赖 + 装 Camoufox → 运行镜像 |
 | `docker-compose.yml` | MySQL 8.4 + 浏览器初始化 + 主服务，含卷与健康检查 |
 | `docker_entrypoint.py` | 启动前清理 UBO 残缺目录、拒绝 `AGG_WORKERS>1` |
 | `.env.docker.example` | 环境变量样例（复制成 `.env.docker` 填值） |
+| `tools/install_camoufox.py` | 从 `vendor/` 里的离线包安装 Camoufox（目标网络到 github.com 不通，`camoufox fetch` 必失败） |
+| `web/` | 统一前端源码（`dist/` 不入库，镜像里由构建阶段生成） |
 
 ## 2. 部署步骤
 
@@ -33,8 +35,10 @@ docker compose logs -f app
 ```
 
 打开 `http://192.168.101.91:8000/`：
-- `/` 聚合壳页，`#/wipo` 商标监控、`#/credit` 营业执照巡检
+- `/` 统一前端，左侧系统列表切「WIPO」与「营业执照」，功能项按系统变化
+  （WIPO：`/input` `/list` `/check` `/reports`；营业执照：`/overview` `/submit` `/schedules` `/jobs`）
 - `/docs` Swagger（两个模块的接口已合并，按 tag 分组）
+- 旧地址 `/wipo`、`/credit` 仍可用，会 307 到 `/input`、`/overview`
 
 > 打不开且 `docker compose ps` 显示 `127.0.0.1:8000->8000/tcp`，
 > 就是 `AGG_BIND` 没改，见 §3.1。
@@ -238,20 +242,20 @@ docker compose logs app | grep -E "已挂载|调度补算"
 （只有 `python3`），`python tools/build_frontends.py` 直接 exit 127。
 现在该阶段显式装 `python3` 并调用 `python3`。
 
-### 7.2 端点验收（全部实测返回 200）
+### 7.2 端点验收（统一前端**之前**的记录，全部实测返回 200）
 
 | 端点 | 结果 |
 |---|---|
 | `GET /health` | 200，`{"status":"ok","dependencies":{"database":"up","wipo_api":"up"}}` |
-| `GET /`（聚合壳页） | 200 |
-| `GET /wipo/` | 200 |
-| `GET /credit/` | 200 |
+| `GET /`（当时的 iframe 壳页） | 200 |
+| `GET /wipo/`（当时是真实前端，现为 307） | 200 |
+| `GET /credit/`（当时是真实前端，现为 307） | 200 |
 | `GET /docs`（Swagger） | 200 |
 | `GET /api/trademarks` | 200 |
 | `GET /api/schedules` | 200 |
 | `GET /openapi.json` | 21 paths / 7 tags（check、io、jobs、reports、schedules、system、trademarks） |
 
-### 7.2b 跨机访问（从 Windows 主机打过去，不是容器内自测）
+### 7.2b 跨机访问（从 Windows 主机打过去，不是容器内自测；统一前端**之前**）
 
 容器内 `curl 127.0.0.1` 只能证明「应用活着」，证明不了「别人能用」。
 把 `AGG_BIND` 从 `127.0.0.1` 改成 `0.0.0.0` 并重建容器后，从另一台机器实测：
@@ -259,8 +263,8 @@ docker compose logs app | grep -E "已挂载|调度补算"
 | 地址 | 结果 |
 |---|---|
 | `http://192.168.101.91:8000/health` | **200** `{"status":"ok","app":"WIPO 商标监控系统",...}` |
-| `http://192.168.101.91:8000/wipo/` | **200** |
-| `http://192.168.101.91:8000/credit/` | **200** |
+| `http://192.168.101.91:8000/wipo/` | **200**（当时是真实前端，现为 307 → `/input`） |
+| `http://192.168.101.91:8000/credit/` | **200**（当时是真实前端，现为 307 → `/overview`） |
 | `http://192.168.101.91:8000/api/schedules` | **200** |
 
 `Test-NetConnection 192.168.101.91 -Port 8000` → `True`。
@@ -273,6 +277,73 @@ docker compose logs app | grep -E "已挂载|调度补算"
 > Docker 发布端口时走的是 iptables 的 `DOCKER` 链，**绕过 ufw 的 INPUT 规则**。
 > 所以「ufw 开着」不等于「端口被挡」，别在这上面绕弯子。
 > 反过来说：想让 ufw 真的管住容器端口，得额外配 `DOCKER-USER` 链。
+
+### 7.2c 统一前端后的重测（当前形态，2026-10-20）
+
+用 commit `1910dc9` 重建镜像后，从 **Windows 主机**打 `192.168.101.91:8000` 实测。
+（`AGG_BIND` 必须为 `0.0.0.0`，否则容器内自测全 200、跨机全 `10061 拒绝连接`。）
+
+**路由**（八个业务路由 + 首页全 200）：
+
+| 路径 | 状态 | | 路径 | 状态 |
+|---|---|---|---|---|
+| `/` | 200 | | `/overview` | 200 |
+| `/input` | 200 | | `/submit` | 200 |
+| `/list` | 200 | | `/schedules` | 200 |
+| `/check` | 200 | | `/jobs` | 200 |
+| `/reports` | 200 | | | |
+
+**旧地址降级为 307**（不是 404，也不是 200）：
+
+| 旧地址 | 状态 | 目标 |
+|---|---|---|
+| `/wipo` `/wipo/` | 307 | `/input` |
+| `/credit` `/credit/` | 307 | `/overview` |
+
+**接口**：`/health`、`/api/health`、`/api/trademarks`、`/api/schedules`、
+`/api/schema`、`/docs`、`/openapi.json` 全 200；`openapi` = **21 paths / 7 tags**。
+`/health` 体：`{"status":"ok","dependencies":{"database":"up","wipo_api":"up"}}`。
+
+**前端产物**：`GET /` 的 `index.html` 引用 `/assets/index-tM5D1Es3.js` 与
+`/assets/index-j2hDkDOL.css`（绝对前缀，深链刷新不会 404）；
+`GET /assets/nope.js` → **404 `application/json`**（没有回落成 index.html）。
+
+**镜像内三套产物都在**（漏任何一套都会表现为「接口正常、页面不对」）：
+
+```
+web/dist/index.html
+modules/wipo/web/dist/index.html
+modules/credit/frontend/dist/index.html
+web/dist/assets/index-*.css  → 含 .btn-icon svg 规则
+```
+
+**浏览器烟测（Playwright 从 Windows 打 91，17/17 PASS，零 console error）**：
+
+| 断言 | 实测 |
+|---|---|
+| 默认进 `/input` | ✅ |
+| 左侧系统列表 2 项、名为 WIPO / 营业执照 | ✅ |
+| 侧栏宽度 240px | ✅ |
+| WIPO 功能项 4 个 | ✅ |
+| 切到营业执照 → URL `/overview`、`window` 标记存活（**无整页刷新**） | ✅ |
+| 切换前后侧栏几何不变（width/x 差 <1px） | ✅ |
+| 主按钮 `rgb(79, 70, 229)`、卡片圆角 `12px` | ✅ |
+| `/submit` `/schedules` `/jobs` 标题正确 | ✅ |
+| 定时巡检页初始不弹配置窗 | ✅ |
+| 切回 WIPO → `/input`、录入页可见 | ✅ |
+
+**容器内回归**（新镜像，Linux）：credit `254 passed`、WIPO `118 passed`
+（WIPO 需先 `python -m playwright install chromium`）。
+
+**真实巡检作业**（端到端，含 Camoufox + ddddocr）：
+
+```
+POST /api/jobs {"names":["9144030071526726XG"],"mail_to":""}
+→ 202 job_20261020_081859_fbb728
+→ state=done, ok=1, alert=0
+→ matched_name=腾讯科技(深圳)有限公司 / credit_code=9144030071526726XG
+  status=存续 / verdict=ok / data_source=市场监督管理总局
+```
 
 ### 7.3 端到端真实巡检（决定性证据）
 
