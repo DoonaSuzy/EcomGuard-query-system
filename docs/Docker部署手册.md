@@ -43,6 +43,43 @@ docker compose logs -f app
 > 打不开且 `docker compose ps` 显示 `127.0.0.1:8000->8000/tcp`，
 > 就是 `AGG_BIND` 没改，见 §3.1。
 
+## 2b. 已经跑起来过，怎么更新到新版
+
+只在**核心依赖**（requirements / camoufox）变动时才需要重建镜像并清浏览器卷；
+纯业务代码改动**必须重建镜像**（代码是 COPY 进镜像的，不是挂载的），
+但**不要**加 `-v`——那会删掉 MySQL 数据卷和 Camoufox 缓存卷（1.3 GB，要重下）。
+
+```bash
+cd /path/to/aggregated-system
+git pull --ff-only
+
+# 前端产物不需要在 91 上构建：Dockerfile 的 frontend stage 用 node 镜像自己建
+# （91 主机没有 node，这是刻意的——别照着旧文档在主机上跑 npm）
+
+docker compose --env-file .env.docker up -d --build   # 不加 -v
+docker compose ps                                      # 等 app 变成 healthy
+docker compose logs app | tail -50                     # 看迁移/调度补算日志
+```
+
+**升级到 `always_notify` 默认 True 这一版时，日志里应出现**：
+
+```
+营业执照模块已挂载
+调度补算 N 条
+```
+
+老库的存量调度会在 `Store.__init__` 里被一次性回填成 `always_notify=1`
+（标记 `mig_20261020_always_notify_on` 落在 `meta` 表）。
+验证：
+
+```bash
+curl -s http://127.0.0.1:8000/api/schedules | python -m json.tool | grep always_notify
+# 应全部为 true
+```
+
+> 回填**只跑一次**。之后在页面上把某条调度关成「只在有异常时推送」，
+> 重启不会又被翻开——这是刻意留的能力，不是 bug。
+
 ## 3. 八个关键决策（改动前先读）
 
 ### 3.1 两个「0.0.0.0」别搞混（最容易白折腾半天的地方）
@@ -332,7 +369,8 @@ web/dist/assets/index-*.css  → 含 .btn-icon svg 规则
 | 定时巡检页初始不弹配置窗 | ✅ |
 | 切回 WIPO → `/input`、录入页可见 | ✅ |
 
-**容器内回归**（新镜像，Linux）：credit `254 passed`、WIPO `118 passed`
+**容器内回归**（新镜像，Linux）：credit `254 passed`（该镜像构建时的计数，
+当前主干为 **271**）、WIPO `118 passed`
 （WIPO 需先 `python -m playwright install chromium`）。
 
 **真实巡检作业**（端到端，含 Camoufox + ddddocr）：
@@ -380,7 +418,9 @@ POST /api/jobs  {"names": ["9144030071526726XG"], "mail_to": ""}
 
 ### 7.3b 邮件推送端到端（决定性证据，已真发信）
 
-配上真实 SMTP 后重跑，**强制推送**（`always_notify: true`，原因见下）：
+配上真实 SMTP 后重跑。**注意**：下面这条实测发生在 2026-10-20 之前，
+当时 `always_notify` 默认还是 `False`，所以要显式传 `true` 才发得出去；
+**现在默认就是 `true`**，不传这个字段也会发。
 
 ```json
 POST /api/jobs  {"names": ["9144030071526726XG"],
@@ -407,9 +447,9 @@ notify_error : None
 至此整条链路闭环：**API → 作业队列 → Camoufox → 国家企业信用信息公示系统
 → ddddocr → 解析 → MySQL → SMTP 真发信 → `notified=1`**。
 
-#### ⚠️ 一个会让人以为「邮件坏了」的设计
+#### 推送闸门：`always_notify` 默认 **开**（2026-10-20 起）
 
-`api.py:1089`：
+`api.py` 的 `_maybe_notify` 里有一道闸门：
 
 ```python
 if not need and not req.get("always_notify"):
@@ -417,20 +457,29 @@ if not need and not req.get("always_notify"):
     return
 ```
 
-**默认只有出现异常（`alert` / `notfound` / `unknown`）才推送**。
-如果巡检的几家公司全部 `ok`，即使填了邮箱也**不会收到任何邮件**，
-且 `notified=false`、`notify_error=null`（既没发也没报错）。
+即：**只有出现异常（`alert` / `notfound` / `unknown`）时才推**，
+除非 `always_notify` 为真。
 
-实测就撞到过：第一次用腾讯（`verdict: ok`）测试，`notified=false` 一度
-以为又是静默失败，查日志才看到「全部正常，跳过推送」。
+`always_notify` 的默认值是 **`True`**（`CheckRequest` / `ScheduleIn` /
+两套建表 DDL 都是 1）。原因：巡检结果本身就是交付物，「全部正常」也是
+有效信息——研发要每期看到全量名单与各自判定，而不是「没收到信 = 没跑」。
+置 `False` 才退回「只在有异常时收」，这是给不想天天收信的人留的口子。
 
-这是**刻意设计**（避免每天一封「一切正常」的噪音邮件），但第一次遇到
-极易误判。想「无论有没有异常都收一封」就传 `always_notify: true`——
-前端提交页与定时调度里都有这个开关（`api.py:154`，描述是「无异常也推送（周报用）」）。
+> **升级注意（老库）**：建表默认值只影响**新行**。老库里已有的调度仍是 0，
+> `Store.__init__` 会用一次性标记 `mig_20261020_always_notify_on`
+> 把所有 `always_notify=0` 的行改成 1，标记落进 `meta` 表后不再重放。
+> 所以运营事后手工关掉某一条，重启不会被又翻开。
 
-> 所以判断邮件是否正常，不能只看「有没有收到信」，要看作业详情的
+**历史记录（口径必须标明）**：上面 §7.3b 的实测发生在 2026-10-20 之前，
+当时的默认值是 `False`，所以那次的「强制推送」是显式传了
+`"always_notify": true` 才发出去的；当时也撞到过用腾讯（`verdict: ok`）
+测试却 `notified=false`、一度以为静默失败，查日志才看到「全部正常，跳过推送」。
+**现在默认就是发**，同样的操作不需要再传这个字段。
+
+> 判断邮件是否正常，仍然不能只看「有没有收到信」，要看作业详情的
 > `notified` + `notify_error` 两个字段：
-> `notified=true` = 发了；`notified=false + notify_error=null` = 被跳过（无异常）；
+> `notified=true` = 发了；`notified=false + notify_error=null` = 被跳过
+> （只可能是有人显式关了 `always_notify`）；
 > `notified=false + notify_error="mail: ..."` = 真失败。
 
 #### ⚠️ 第二个陷阱：`state=done` 的那一刻 `notified` 可能还是 false
@@ -451,15 +500,16 @@ if not need and not req.get("always_notify"):
 用镜像本身跑（镜像里已带 pytest / httpx / Pillow / aiosqlite，无需另装）：
 
 ```bash
+# 镜像里是构建当时的主干；下面的 254 是那次构建的计数，当前主干为 271
 docker run --rm -e PYTHONIOENCODING=utf-8 -e TZ=Asia/Shanghai \
   -w /app/modules/credit aggregated-inspection-app:local \
   python -m pytest test_regression.py -q
-# → 254 passed
+# → 254 passed（构建当时）
 ```
 
 | 模块 | 结果 | 说明 |
 |---|---|---|
-| credit `test_regression.py` | **254 passed** | 与 Windows 侧一致 |
+| credit `test_regression.py` | **254 passed**（当前主干 271） | 与 Windows 侧一致 |
 | WIPO `tests/` | **33 passed / 85 errors** | 85 项是 Playwright E2E，需 chromium |
 
 **为什么 WIPO 那 85 项在容器里跑不了**：镜像只装了 Camoufox 浏览器，
