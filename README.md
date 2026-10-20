@@ -99,7 +99,7 @@
 
 > **playwright 为什么取 1.62.0**：camoufox 对它的依赖声明是**无版本上限的裸依赖**（`requires('camoufox')` 输出 `playwright`），
 > 实测 1.62.0 下 camoufox 正常工作；而 WIPO 的 E2E 要 1.62.0。取高版本能同时满足。
-> **fastapi 为什么取 0.143.0**：credit 声明的是 0.118.3，但它的 202 项回归在 0.143.0 上全绿。
+> **fastapi 为什么取 0.143.0**：credit 声明的是 0.118.3，但它的 254 项回归在 0.143.0 上全绿。
 
 ### 前端（两套独立产物）
 
@@ -519,10 +519,11 @@ WIPO 新增商标 → 切页 → 表格计数、切到营业执照**不整页刷
 |---|---|---|
 | WIPO（用自带 `pyproject.toml` 配置） | `ruff check app tests tests_new cli.py verify_fixes.py verify_new_stack.py` | **All checks passed** |
 | credit | `python tools\run_ci_lint.py` | 两项 `rc = 0`（它**没有** ruff 配置，裸跑有 85 项上游既有告警） |
-| 聚合层 | `ruff check aggregator.py credit_api_glue.py tools` | **15 项未清**（13 fixable：UP009×4、RUF100×6、F401、I001、RUF022、BLE001、PLW1510） |
+| 聚合层 + tools | `ruff check aggregator.py credit_api_glue.py tools` | **All checks passed** |
 
-仓库根**没有统一 ruff 配置**，所以 `ruff check .` 会报 322 项（绝大多数是模块里的上游告警）。
-正确做法是「各模块用各自 CI 同款命令分别跑」——聚合层这 15 项是待清理项，不是已通过项。
+仓库根**没有统一 ruff 配置**，所以 `ruff check .` 会报几百项（绝大多数是模块里的上游告警，
+以及 `node_modules` 里的 JS）。正确做法是「各模块用各自 CI 同款命令分别跑」——
+CI 的 lint job 就是上面三条的组合，零容忍。
 
 ### 端到端验收为什么不用 pytest
 
