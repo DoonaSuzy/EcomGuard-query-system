@@ -20,6 +20,7 @@ import csv
 import io
 import logging
 import logging.handlers
+import os
 import re
 import sys
 from pathlib import Path
@@ -2554,7 +2555,15 @@ class TestScheduleApi:
                        json=self._body(freq="monthly", day=5, at_time="18:00"))
         j = r.json()
         assert j["human"] == "每月 5 日 18:00"
-        assert j["next_run_at"].endswith("18:00:00+08:00")
+        # 断言带 +08:00 是刻意的：next_run_at 是「本地墙钟时间」，生产
+        # docker-compose 设的就是 TZ=Asia/Shanghai。时区不对时报错要直接
+        # 指向根因，否则只看到一个时区串对不上，容易怀疑是算错了。
+        assert j["next_run_at"].endswith("18:00:00+08:00"), (
+            f"next_run_at={j['next_run_at']!r} 不是 +08:00，进程时区不是东八区"
+            f"（TZ={os.environ.get('TZ', '<未设置>')}）。"
+            f" Linux/容器：跑测试加 TZ=Asia/Shanghai（与生产 compose 一致）。"
+            f" Windows：**不要**设 TZ —— MSVCRT 会把 'Asia/Shanghai' 解析成"
+            f" +01:00 这种错误偏移，改为把系统时区设成东八区。")
 
     def test_preview_does_not_persist(self, client):
         """预览是纯计算：填表过程中不该往库里塞半成品配置。"""

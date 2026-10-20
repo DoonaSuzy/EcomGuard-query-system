@@ -13,6 +13,10 @@ concurrency:
 
 env:
   PIP_INDEX_URL: https://pypi.tuna.tsinghua.edu.cn/simple
+  # 定时巡检的 next_run_at 是「本地时间」语义（schedule.py 按本地墙钟算），
+  # docker-compose 里也设了 TZ=Asia/Shanghai。CI runner 默认 UTC，不设这里
+  # test_update_recomputes_next_run 会拿到 2026-11-05T18:00:00+00:00 而失败。
+  TZ: Asia/Shanghai
 
 jobs:
   # ---------- Job 1：lint（快，先跑先挂） ----------
